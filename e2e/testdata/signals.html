@@ -1,0 +1,14 @@
+<!doctype html><html><head><title>Signals</title></head><body><main>
+<h1>Products</h1>
+<form id="f" novalidate onsubmit="event.preventDefault(); const e=document.getElementById('email'); if(!e.value.includes('@')){e.setAttribute('aria-invalid','true'); document.getElementById('err').textContent='Enter a valid email';} else {e.removeAttribute('aria-invalid'); document.getElementById('err').textContent=''; toast('Saved!')}">
+<label for="email">Email</label><input id="email" aria-describedby="err"><span id="err"></span>
+<button type="submit">Save</button>
+</form>
+<button aria-expanded="false" onclick="this.setAttribute('aria-expanded', this.getAttribute('aria-expanded')!=='true'); document.getElementById('more').hidden = !document.getElementById('more').hidden">Details</button>
+<div id="more" hidden><a href="#a">Extra link</a></div>
+<button onclick="document.getElementById('dlg').hidden=false">New product</button>
+<div id="dlg" role="dialog" aria-modal="true" aria-label="New product" hidden style="position:fixed;inset:20%;background:#fff;border:1px solid">
+<input aria-label="Name"><button onclick="document.getElementById('dlg').hidden=true">Close</button></div>
+<div id="toasts" role="status"></div>
+<script>function toast(t){const d=document.createElement('div');d.textContent=t;document.getElementById('toasts').appendChild(d);setTimeout(()=>d.remove(),300)}</script>
+</main></body></html>

@@ -1,0 +1,6 @@
+<!doctype html><html><head><title>Checkout</title></head><body><main>
+<h1>Checkout</h1>
+<p>Total: $42</p>
+<iframe id="pay" title="Payment" width="420" height="220" style="border:1px solid #ccc"></iframe>
+<script>document.getElementById('pay').src = location.search.slice(1) + '/frame-child.html';</script>
+</main></body></html>

@@ -1,0 +1,18 @@
+<!doctype html><html><head><title>Form</title></head><body>
+<h1>Orders</h1>
+<form id="f" onsubmit="event.preventDefault(); document.getElementById('out').textContent='sent '+email.value+' '+plan.value+' '+agree.checked">
+<label for="email">Email</label><input id="email" placeholder="you@x.com">
+<select id="plan"><option value="f">Free</option><option value="p">Pro</option></select>
+<label><input type="checkbox" id="agree"> I agree</label>
+<input type="date" id="d">
+<div contenteditable="true" data-placeholder="Notes" id="notes"></div>
+<button type="submit">Send</button>
+</form>
+<p id="out"></p>
+<table><tr><td>Invoice 1</td><td><button onclick="this.textContent='gone1'">Delete</button></td></tr>
+<tr><td>Invoice 2</td><td><button onclick="this.textContent='gone2'">Delete</button></td></tr></table>
+<button onclick="confirm('sure?') ? (this.textContent='confirmed') : (this.textContent='declined')">Confirm me</button>
+<a href="/article.html" target="_blank">Blank</a>
+<a href="/article.html">Article</a>
+<script>console.log('boot', {a:1}); console.warn('careful'); fetch('/missing.json'); setTimeout(()=>{throw new Error('boom')},10)</script>
+</body></html>

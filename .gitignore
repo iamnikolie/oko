@@ -1,0 +1,9 @@
+# Build artifacts
+/oko
+/dist/
+
+# Local tooling state
+.claude/settings.local.json
+
+# macOS
+.DS_Store
