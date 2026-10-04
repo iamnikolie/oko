@@ -2,9 +2,10 @@
 
 BIN := oko
 PREFIX ?= $(HOME)/.local
-# Local agent-config repo that installs cmd/skill.md into every harness's
-# skills dir. Absent on other machines — `make skill` then does nothing.
-AGENTIC_OS ?= $(CURDIR)/../agentic-os
+# Local agent-config installer (agentic-os, on PATH as imn-ao) that fans
+# cmd/skill.md out to every harness's skills dir. Absent on other machines —
+# `make skill` then does nothing.
+AO ?= imn-ao
 PKG := github.com/iamnikolie/oko/cmd
 
 # Version stamped into the binary. Falls back to the short commit when the tree
@@ -24,11 +25,12 @@ install: build
 # Copy the embedded agent reference into agentic-os and fan it out to the
 # Claude, Codex and Cursor skill dirs.
 skill:
-	@if [ -d "$(AGENTIC_OS)/global/skills" ]; then \
-		mkdir -p "$(AGENTIC_OS)/global/skills/oko" && \
-		cp cmd/skill.md "$(AGENTIC_OS)/global/skills/oko/SKILL.md" && \
-		for h in claude-personal codex cursor; do "$(AGENTIC_OS)/ao" install $$h | head -1; done; \
-	else echo "skill: no $(AGENTIC_OS)/global/skills, skipping"; fi
+	@root=$$($(AO) root 2>/dev/null); \
+	if [ -n "$$root" ] && [ -d "$$root/global/skills" ]; then \
+		mkdir -p "$$root/global/skills/oko" && \
+		cp cmd/skill.md "$$root/global/skills/oko/SKILL.md" && \
+		for h in claude-personal codex cursor; do $(AO) install $$h | head -1; done; \
+	else echo "skill: $(AO) not found, skipping"; fi
 
 uninstall:
 	rm -f $(PREFIX)/bin/$(BIN)
