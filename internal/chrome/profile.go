@@ -42,6 +42,8 @@ type State struct {
 	Seq map[string]int `json:"seq,omitempty"`
 	// Holders maps tab id to the pid keeping its device emulation alive.
 	Holders map[string]int `json:"holders,omitempty"`
+	// NoWatch keeps the element-picker watcher from starting with the browser.
+	NoWatch bool `json:"no_watch,omitempty"`
 }
 
 type Profile struct {

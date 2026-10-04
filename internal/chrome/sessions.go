@@ -101,10 +101,23 @@ func (s *Session) Prune(live map[string]bool) {
 // Owners maps tab id to the key of the session owning it, across every live
 // session of the profile. Sessions idle longer than SessionTTL are removed.
 func (p *Profile) Owners() map[string]string {
+	owners, _ := p.sessionTabs()
+	return owners
+}
+
+// Current maps tab id to the keys of the live sessions using it as their
+// current tab.
+func (p *Profile) Current() map[string][]string {
+	_, cur := p.sessionTabs()
+	return cur
+}
+
+func (p *Profile) sessionTabs() (map[string]string, map[string][]string) {
 	out := map[string]string{}
+	cur := map[string][]string{}
 	ents, err := os.ReadDir(p.sessionsDir())
 	if err != nil {
-		return out
+		return out, cur
 	}
 	for _, e := range ents {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
@@ -121,6 +134,7 @@ func (p *Profile) Owners() map[string]string {
 		}
 		var v struct {
 			Key    string   `json:"key"`
+			Tab    string   `json:"tab"`
 			Opened []string `json:"opened"`
 		}
 		if json.Unmarshal(b, &v) != nil {
@@ -133,6 +147,9 @@ func (p *Profile) Owners() map[string]string {
 		for _, id := range v.Opened {
 			out[id] = key
 		}
+		if v.Tab != "" {
+			cur[v.Tab] = append(cur[v.Tab], key)
+		}
 	}
-	return out
+	return out, cur
 }

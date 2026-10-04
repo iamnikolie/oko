@@ -25,6 +25,13 @@ feeds and crashed tabs; `--human` gives curved mouse paths and wheel scrolling.
 `oko up --proxy http://user:pass@host:port` routes a profile through an
 authenticated proxy (http, https, socks5) via a local relay.
 
+**Point instead of describe.** In the oko window press Alt+P and click
+elements (with an optional note); the agent gets each one as a snapshot ref,
+component and source file (React/Vue/Svelte dev builds), CSS path, box and
+styles, a crop and your note. `oko pick` asks you to point and waits; `oko
+picks` reads what you picked. See [Picks in Claude Code](#picks-in-claude-code)
+to have picks arrive with your next message by themselves.
+
 `oko skill` prints the full agent reference (also installed as a Claude Code /
 Codex skill).
 
@@ -64,6 +71,40 @@ macOS and Linux. Needs Google Chrome (or Chromium; set `OKO_CHROME` to the binar
 in `~/.oko` (`OKO_HOME` to move it): one Chrome user-data dir per profile,
 screenshots in `~/.oko/shots`.
 
+## Picks in Claude Code
+
+`oko picks --hook` is a `UserPromptSubmit` hook: each time you send a message,
+Claude Code runs it, and whatever you picked in the browser since your last
+message is added to that message's context (picks made in a tab another agent
+session works in go to that session). With nothing picked it prints nothing
+and returns in ~15 ms; it only reads files under `~/.oko`, never starts Chrome,
+and never fails your prompt.
+
+Add it to your user settings, `~/.claude/settings.json` (or
+`$CLAUDE_CONFIG_DIR/settings.json`), for every project, or to a project's
+`.claude/settings.json` for that project only. Merge it into an existing
+`hooks` object rather than replacing it:
+
+```json
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      { "hooks": [ { "type": "command", "command": "oko picks --hook", "timeout": 5 } ] }
+    ]
+  }
+}
+```
+
+Use the absolute path (`which oko`) if `oko` is not on the `PATH` Claude Code
+starts with. Check it: run `/hooks` in Claude Code, press Alt+P in the oko
+window, click something, and send any message; the agent's context now holds an
+`<oko-picks>` block. Without the hook (other agents, or by choice) the agent
+reads picks with `oko picks`, waits for them with `oko picks --wait`, or asks
+you with `oko pick`.
+
+The picker itself starts with the browser. `oko watch off` turns it off for a
+profile, `oko watch on` back on.
+
 ## Design
 
 - Own profile per `--profile`, launched with a random debugging port bound to
@@ -80,6 +121,12 @@ screenshots in `~/.oko/shots`.
 - A proxied profile points Chrome at a local relay (`oko _proxy`, exits with
   Chrome) because Chrome takes no proxy credentials on its command line. The
   upstream URL, password included, sits in the profile's `state.json` (0600).
+- The element picker runs from a background `oko _watch` per profile (exits
+  with Chrome). It lives in an isolated world of every tab, so the page sees
+  neither its overlay state nor the binding it reports through, and a page
+  cannot forge picks. The watcher avoids `Runtime.enable` (a common bot-check
+  signal) and reinstalls the binding for each new document instead. Picks are
+  stored in `profiles/<name>/picks/`.
 - JS dialogs are answered during every command (they would otherwise freeze
   the tab) and reported.
 

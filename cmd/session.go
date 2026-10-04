@@ -81,6 +81,8 @@ func run(fn func(s *session) error) error {
 	if err != nil {
 		return err
 	}
+	// The element picker rides along with the browser.
+	_ = ensureWatch(s.prof, false)
 	err = fn(s)
 	s.flushNotes()
 	s.record()

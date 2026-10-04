@@ -75,12 +75,14 @@ var upCmd = &cobra.Command{
 					msg += "\n" + proxyNote + " (applies after 'oko down' + 'oko up')"
 				}
 			}
+			_ = ensureWatch(p, false)
 			fmt.Fprintf(stdout, "already running: profile %s, port %d%s\n", p.Name, p.State.Port, msg)
 			return nil
 		}
 		if _, err := p.Launch(ctx, upHeadless); err != nil {
 			return err
 		}
+		_ = ensureWatch(p, false)
 		mode := "window"
 		if upHeadless {
 			mode = "headless"
@@ -121,6 +123,9 @@ var downCmd = &cobra.Command{
 			return fmt.Errorf("chrome (pid %d) did not exit", pid)
 		}
 		p.StopRelay()
+		if pid := watchPID(p); pid != 0 {
+			_ = syscall.Kill(pid, syscall.SIGTERM)
+		}
 		fmt.Fprintln(stdout, "stopped")
 		return nil
 	},

@@ -132,3 +132,11 @@ func waitFor(t *testing.T, cond func() bool) {
 	}
 	t.Fatal("condition not met")
 }
+
+// cmdWithStdin runs oko with stdin and returns stdout only.
+func cmdWithStdin(stdin string, args ...string) string {
+	c := exec.Command(bin, args...)
+	c.Stdin = strings.NewReader(stdin)
+	out, _ := c.Output()
+	return string(out)
+}
