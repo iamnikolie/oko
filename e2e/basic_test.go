@@ -87,6 +87,15 @@ func TestViewportMobile(t *testing.T) {
 	oko(t, "viewport", "reset")
 }
 
+func TestWindow(t *testing.T) {
+	oko(t, "open", base+"/form.html")
+	must(t, oko(t, "window", "1100x700", "--at", "30,40"), "window normal 1100x700 at 30,40")
+	must(t, oko(t, "window", "max"), "window maximized")
+	must(t, oko(t, "window", "fullscreen"), "window fullscreen")
+	must(t, oko(t, "window", "normal"), "window normal 1100x700 at 30,40")
+	must(t, oko(t, "!", "window", "max", "--at", "0,0"), "only works with a normal window")
+}
+
 // A hidden tab never runs animation frames; clicks must not wait for one.
 func TestClickInHiddenTab(t *testing.T) {
 	oko(t, "open", base+"/form.html")              // the default session's tab stays visible

@@ -214,6 +214,8 @@ oko back | forward | reload
 oko viewport 1280x800    # >= 500 wide: resizes the window to give exactly that viewport
 oko viewport 390x844 --mobile   # phone: device emulation (mobile layout, touch, dpr 3), kept alive by a background oko process
 oko viewport reset       # drop emulation
+oko window [max|fullscreen|normal|min]   # no arg: state, bounds, viewport; fullscreen = own Space on macOS
+oko window 1440x900 [--at 0,0]           # outer window size / position (restores a maximized window first)
 oko status | up [--headless] [--lang en-US] [--proxy URL] | down   # --lang/--proxy remembered per profile
 ```
 
