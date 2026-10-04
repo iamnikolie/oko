@@ -123,7 +123,7 @@ var reviveCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			id := s.prof.State.Tab
+			id := s.me.Tab
 			if len(args) == 1 {
 				id = args[0]
 			} else if tabFlag != "" {
@@ -136,14 +136,20 @@ var reviveCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
+			s.strict = true // revive closes the old tab
+			if err := s.checkForeign(t.TargetID); err != nil {
+				return err
+			}
 			// Target-level calls work even when the renderer is gone.
 			np, err := s.b.Page(proto.TargetCreateTarget{URL: t.URL, Background: true})
 			if err != nil {
 				return err
 			}
 			_, _ = proto.TargetCloseTarget{TargetID: t.TargetID}.Call(s.b)
-			s.prof.State.Tab = string(np.TargetID)
-			_ = s.prof.Save()
+			s.claim(np.TargetID)
+			if s.me.Tab == "" || s.me.Tab == string(t.TargetID) {
+				s.makeCurrent(np.TargetID)
+			}
 			fmt.Fprintf(stdout, "revived %s as %s: %s\n", shortID(t.TargetID), shortID(np.TargetID), t.URL)
 			return nil
 		})
@@ -153,5 +159,6 @@ var reviveCmd = &cobra.Command{
 func init() {
 	trimCmd.Flags().IntVar(&trimKeep, "keep", 30, "always keep this many items at the end of the list")
 	trimCmd.Flags().BoolVar(&trimHide, "hide", false, "hide items instead of removing them")
+	reviveCmd.Flags().BoolVar(&forceFlag, "force", false, "revive a tab another session owns")
 	rootCmd.AddCommand(trimCmd, reviveCmd)
 }

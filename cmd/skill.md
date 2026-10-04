@@ -13,12 +13,16 @@ stateless: attach → act → print → exit (~0.15s).
 ## Loop
 
 ```sh
-oko open localhost:5173          # navigate current tab (adds http:// for localhost, https:// otherwise)
+oko open localhost:5173          # navigate your current tab (adds http:// for localhost, https:// otherwise)
 oko snap                         # elements with refs: [e12] button "Save"
 oko fill e7 "me@example.com"   # act on refs
 oko click e12                    # prints what was clicked + navigation / new tab / dialog
 oko snap                         # look again
 ```
+
+Your current tab is yours alone: oko keys it by session (`--session` /
+`$OKO_SESSION`, else `$CLAUDE_CODE_SESSION_ID`), so other agents on the same
+profile get their own tabs and cannot move yours. See "Tabs" below.
 
 Refs (`e12`) stay valid while the element exists; after navigation run `snap`
 again. Targets everywhere accept a ref (`e12` / `@e12`), `text=Sign in`
@@ -155,10 +159,10 @@ Numbers are this machine and network, not field data.
 ## Tabs, browser, profiles
 
 ```sh
-oko tabs                 # * = current
-oko open <url> --new     # new background window, becomes current (never steals focus)
-oko tab <id> [--front]   # switch which tab oko acts on; --front also shows it (raises Chrome)
-oko close [id]
+oko tabs                 # * = your current, owner column: you / other session / -
+oko open <url> --new     # new background window, yours, becomes current (never steals focus)
+oko tab <id> [--front]   # switch your current tab; --front also shows it (raises Chrome)
+oko close [id]           # default: your current tab; another session's tab needs --force
 oko back | forward | reload
 oko viewport 1280x800    # >= 500 wide: resizes the window to give exactly that viewport
 oko viewport 390x844 --mobile   # phone: device emulation (mobile layout, touch, dpr 3), kept alive by a background oko process
@@ -166,8 +170,21 @@ oko viewport reset       # drop emulation
 oko status | up [--headless] [--lang en-US] [--proxy URL] | down   # --lang/--proxy remembered per profile
 ```
 
-- `--tab <id>` / `$OKO_TAB` acts on a specific tab without changing the current
-  one — use it when several agents share a profile.
+- Sessions: each caller has its own current tab and owns the tabs it opened.
+  The key is `--session <name>` / `$OKO_SESSION`, else `$CLAUDE_CODE_SESSION_ID`
+  (set by Claude Code), else a shared `default` (a human in a terminal). A
+  session's first `oko open` takes a fresh tab, never one another session holds.
+  Subagents inherit the parent's `CLAUDE_CODE_SESSION_ID`: parallel subagents
+  that browse must each pass their own `--session <name>` on every call.
+- `oko tabs` shows each tab's owner (`you`, another session's key, `-` for
+  nobody). `open`/`close`/`revive` refuse a tab another session owns unless
+  `--force`; other commands on it (`--tab`, `tab`) work but print a note.
+  Never `close` or `open --force` a tab you did not open.
+- `oko: note: tab … navigated since your last command (was X, now Y)`: the page
+  changed between your commands (redirect, or another caller on a shared
+  session). Check it is still the page you mean before acting.
+- `--tab <id>` / `$OKO_TAB` acts on a specific tab without changing your current
+  one. Sessions idle for 6 h release their tabs.
 - `--profile <name>` / `$OKO_PROFILE`: separate Chrome, logins and current tab
   (e.g. `work` vs `default`). Profiles can run at the same time.
 - Logins: the window is a normal Chrome. When a site needs a login, open it with

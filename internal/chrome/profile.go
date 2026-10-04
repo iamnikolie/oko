@@ -21,9 +21,10 @@ import (
 
 // State is persisted per profile in state.json.
 type State struct {
-	Port     int    `json:"port,omitempty"` // last seen debugging port (informational)
-	Tab      string `json:"tab,omitempty"`  // target id of the current tab
-	Headless bool   `json:"headless,omitempty"`
+	// Port is the last seen debugging port (informational). The current tab
+	// is per caller, in sessions/ (see Session).
+	Port     int  `json:"port,omitempty"`
+	Headless bool `json:"headless,omitempty"`
 	// Lang is the browser UI and Accept-Language locale, e.g. "en-US".
 	Lang string `json:"lang,omitempty"`
 	// Proxy is the upstream proxy URL (credentials included) Chrome reaches
@@ -264,7 +265,6 @@ func (p *Profile) Launch(ctx context.Context, headless bool) (string, error) {
 	go func() { exited <- c.Wait() }()
 
 	p.State.Headless = headless
-	p.State.Tab = ""
 	_ = p.Save()
 
 	deadline := time.Now().Add(20 * time.Second)

@@ -69,6 +69,10 @@ screenshots in `~/.oko/shots`.
 - Own profile per `--profile`, launched with a random debugging port bound to
   127.0.0.1. oko finds it through the profile's `DevToolsActivePort` file and
   checks it, so it never attaches to some other Chrome.
+- Current tab is per caller session (`--session` / `$OKO_SESSION`, else
+  `$CLAUDE_CODE_SESSION_ID`, else a shared `default`), stored in
+  `profiles/<name>/sessions/`. Agents sharing a profile get their own tabs;
+  navigating or closing another session's tab needs `--force`.
 - Snapshots are built in the page: interactive elements get refs (`e12`) kept
   in a page-side map, stable across snapshots while the element lives.
 - Console history comes from Chrome's own replay on `Runtime.enable`, so

@@ -45,6 +45,8 @@ func TestMain(m *testing.M) {
 	os.Setenv("OKO_PROFILE", "default")
 	os.Setenv("OKO_HUMAN", "")
 	os.Setenv("OKO_TAB", "")
+	os.Setenv("OKO_SESSION", "")
+	os.Unsetenv("CLAUDE_CODE_SESSION_ID")
 
 	base = serve("localhost", http.FileServer(http.Dir("testdata")))
 	alt = serve("127.0.0.1", http.FileServer(http.Dir("testdata")))

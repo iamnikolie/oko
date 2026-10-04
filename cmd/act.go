@@ -130,10 +130,8 @@ func act(fn func(s *session, p *rod.Page) (string, error)) error {
 			}
 			for _, t := range tabsAfter {
 				if !known[t.TargetID] {
-					if tabFlag == "" {
-						s.prof.State.Tab = string(t.TargetID)
-						_ = s.prof.Save()
-					}
+					s.claim(t.TargetID)
+					s.setCurrent(t.TargetID)
 					np, err := s.b.PageFromTarget(t.TargetID)
 					if err == nil {
 						_ = np.Timeout(10 * time.Second).WaitLoad()

@@ -20,6 +20,16 @@ type session struct {
 	ctx  context.Context
 	prof *chrome.Profile
 	b    *rod.Browser
+	// me is the caller: its current tab and the tabs it owns.
+	me *chrome.Session
+	// owners maps tab id to the owning session key (lazy, see owner).
+	owners map[string]string
+	// strict makes acting on another session's tab an error instead of a
+	// warning; set by commands that navigate or close the tab.
+	strict bool
+	// looked is set once the command resolved the caller's current tab, so
+	// its URL is recorded for the next command's drift check.
+	looked bool
 
 	mu    sync.Mutex
 	notes []string // dialogs answered during the command
@@ -60,7 +70,7 @@ func connect(ctx context.Context, launch bool) (*session, error) {
 	if err := b.Connect(); err != nil {
 		return nil, fmt.Errorf("attach to chrome on port %d: %w", p.State.Port, err)
 	}
-	return &session{ctx: ctx, prof: p, b: b}, nil
+	return &session{ctx: ctx, prof: p, b: b, me: p.Session(sessionKey())}, nil
 }
 
 // run is the common wrapper: timeout, attach (auto-start), run fn.
@@ -73,6 +83,7 @@ func run(fn func(s *session) error) error {
 	}
 	err = fn(s)
 	s.flushNotes()
+	s.record()
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return fmt.Errorf("timed out after %s (raise --timeout if the page is slow)", timeout)
 	}
@@ -123,24 +134,41 @@ func matchTab(ts []*proto.TargetTargetInfo, prefix string) (*proto.TargetTargetI
 	return nil, fmt.Errorf("tab prefix %q is ambiguous", prefix)
 }
 
-// page resolves the tab to act on: --tab, else the remembered current tab,
-// else the first tab (opening one if the browser has none).
+// page resolves the tab to act on: --tab, else this session's current tab,
+// else a tab nobody owns (the shared default session) or a fresh one.
 func (s *session) page() (*rod.Page, error) {
 	ts, err := s.tabs()
 	if err != nil {
 		return nil, err
 	}
+	live := map[string]bool{}
+	for _, t := range ts {
+		live[string(t.TargetID)] = true
+	}
+	s.me.Prune(live)
 	var t *proto.TargetTargetInfo
 	if tabFlag != "" {
 		if t, err = matchTab(ts, tabFlag); err != nil {
 			return nil, err
 		}
-	} else {
-		if s.prof.State.Tab != "" {
-			t, _ = matchTab(ts, s.prof.State.Tab)
+		if err := s.checkForeign(t.TargetID); err != nil {
+			return nil, err
 		}
-		if t == nil && len(ts) > 0 {
-			t = ts[0]
+	} else {
+		if s.me.Tab != "" {
+			t, _ = matchTab(ts, s.me.Tab)
+			if t != nil {
+				if err := s.checkForeign(t.TargetID); err != nil {
+					return nil, err
+				}
+				if s.me.URL != "" && t.URL != s.me.URL {
+					fmt.Fprintf(stderr, "oko: note: tab %s navigated since your last command (was %s, now %s)\n", shortID(t.TargetID), s.me.URL, t.URL)
+					s.me.URL = t.URL
+				}
+			}
+		}
+		if t == nil {
+			t = s.freeTab(ts)
 		}
 		if t == nil {
 			p, err := s.b.Page(proto.TargetCreateTarget{URL: "about:blank", Background: true})
@@ -148,6 +176,7 @@ func (s *session) page() (*rod.Page, error) {
 				return nil, err
 			}
 			s.setCurrent(p.TargetID)
+			s.watchDialogs(p)
 			return p, nil
 		}
 		s.setCurrent(t.TargetID)
@@ -228,12 +257,108 @@ func attachWait() time.Duration {
 	return w
 }
 
-func (s *session) setCurrent(id proto.TargetTargetID) {
-	if tabFlag != "" || s.prof.State.Tab == string(id) {
-		return
+// freeTab picks a tab this session may take without asking: for the shared
+// default session the first tab nobody owns (today's single-user behaviour);
+// for a named session only an unowned blank tab, so it never lands on a page
+// someone else is using.
+func (s *session) freeTab(ts []*proto.TargetTargetInfo) *proto.TargetTargetInfo {
+	for _, t := range ts {
+		if s.owner(t.TargetID) != "" {
+			continue
+		}
+		if s.me.Key == "default" || t.URL == "about:blank" || t.URL == "chrome://newtab/" {
+			return t
+		}
 	}
-	s.prof.State.Tab = string(id)
-	_ = s.prof.Save()
+	return nil
+}
+
+// setCurrent makes the tab this session's current one (not with --tab) and
+// claims it when nobody owns it.
+func (s *session) setCurrent(id proto.TargetTargetID) {
+	if tabFlag == "" {
+		s.makeCurrent(id)
+	}
+}
+
+// makeCurrent makes the tab this session's current one, even under --tab.
+func (s *session) makeCurrent(id proto.TargetTargetID) {
+	s.looked = true
+	s.me.Tab = string(id)
+	if s.owner(id) == "" {
+		s.claim(id)
+	}
+}
+
+// claim records the tab as opened by this session.
+func (s *session) claim(id proto.TargetTargetID) {
+	s.me.Own(string(id))
+	if s.owners != nil {
+		s.owners[string(id)] = s.me.Key
+	}
+}
+
+// owner returns the key of the other session owning the tab, or "" when the
+// tab is this session's or nobody's.
+func (s *session) owner(id proto.TargetTargetID) string {
+	if s.me.Owns(string(id)) {
+		return ""
+	}
+	if s.owners == nil {
+		s.owners = s.prof.Owners()
+	}
+	if k := s.owners[string(id)]; k != s.me.Key {
+		return k
+	}
+	return ""
+}
+
+// checkForeign guards a tab another session owns: an error for commands
+// that navigate or close it (unless --force), a warning otherwise.
+func (s *session) checkForeign(id proto.TargetTargetID) error {
+	o := s.owner(id)
+	if o == "" {
+		return nil
+	}
+	if s.strict && !forceFlag {
+		return fmt.Errorf("tab %s belongs to session %s; open your own with 'oko open <url> --new', or pass --force", shortID(id), shortSession(o))
+	}
+	fmt.Fprintf(stderr, "oko: note: tab %s belongs to session %s\n", shortID(id), shortSession(o))
+	return nil
+}
+
+// ownerLabel names a tab's owner for listings: "you", another session's
+// short key, or "-" for nobody.
+func (s *session) ownerLabel(id proto.TargetTargetID) string {
+	if s.me.Owns(string(id)) {
+		return "you"
+	}
+	if o := s.owner(id); o != "" {
+		return shortSession(o)
+	}
+	return "-"
+}
+
+func shortTab(id string) string { return shortID(proto.TargetTargetID(id)) }
+
+func shortSession(k string) string {
+	if len(k) > 8 {
+		return k[:8]
+	}
+	return k
+}
+
+// record saves this session's state after a command: the URL its current tab
+// ended at, for the next command's drift check.
+func (s *session) record() {
+	if s.looked && s.me.Tab != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if r, err := (proto.TargetGetTargetInfo{TargetID: proto.TargetTargetID(s.me.Tab)}).Call(s.b.Context(ctx)); err == nil {
+			s.me.URL = r.TargetInfo.URL
+		}
+	}
+	_ = s.me.Save()
 }
 
 var refRe = regexp.MustCompile(`^@?((?:f(\d+))?e\d+)$`)

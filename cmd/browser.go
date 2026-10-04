@@ -139,9 +139,10 @@ var statusCmd = &cobra.Command{
 		}
 		_, err = p.Endpoint(ctx)
 		running := err == nil
+		me := p.Session(sessionKey())
 		if jsonOutput {
 			out := map[string]interface{}{"profile": p.Name, "port": p.State.Port, "running": running,
-				"headless": p.State.Headless, "dir": p.UserDataDir(), "tab": p.State.Tab}
+				"headless": p.State.Headless, "dir": p.UserDataDir(), "session": me.Key, "tab": shortTab(me.Tab)}
 			if p.State.Proxy != "" {
 				out["proxy"] = chrome.RedactProxy(p.State.Proxy)
 				out["relay_port"] = p.RelayPort()
@@ -153,6 +154,17 @@ var statusCmd = &cobra.Command{
 			state = "running"
 		}
 		fmt.Fprintf(stdout, "profile %s: %s, port %d\ndir: %s\n", p.Name, state, p.State.Port, p.UserDataDir())
+		cur := "none"
+		if me.Tab != "" {
+			cur = shortTab(me.Tab)
+		}
+		others := map[string]bool{}
+		for _, k := range p.Owners() {
+			if k != me.Key {
+				others[k] = true
+			}
+		}
+		fmt.Fprintf(stdout, "session %s: current tab %s, owns %d; other sessions on this profile: %d\n", shortSession(me.Key), cur, len(me.Opened), len(others))
 		if p.State.Proxy != "" {
 			relay := "relay not running"
 			if port := p.RelayPort(); port > 0 {
@@ -168,7 +180,7 @@ var statusCmd = &cobra.Command{
 
 var tabsCmd = &cobra.Command{
 	Use:   "tabs",
-	Short: "List tabs; * marks the current one",
+	Short: "List tabs with their owner session; * marks your current one",
 	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return run(func(s *session) error {
@@ -176,7 +188,7 @@ var tabsCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			cur := s.prof.State.Tab
+			cur := s.me.Tab
 			if tabFlag != "" {
 				if t, err := matchTab(ts, tabFlag); err == nil {
 					cur = string(t.TargetID)
@@ -185,7 +197,8 @@ var tabsCmd = &cobra.Command{
 			if jsonOutput {
 				var out []map[string]interface{}
 				for _, t := range ts {
-					out = append(out, map[string]interface{}{"id": shortID(t.TargetID), "title": t.Title, "url": t.URL, "current": string(t.TargetID) == cur})
+					out = append(out, map[string]interface{}{"id": shortID(t.TargetID), "title": t.Title, "url": t.URL,
+						"current": string(t.TargetID) == cur, "owner": s.ownerLabel(t.TargetID), "mine": s.me.Owns(string(t.TargetID))})
 				}
 				return printJSON(out)
 			}
@@ -194,7 +207,7 @@ var tabsCmd = &cobra.Command{
 				if string(t.TargetID) == cur {
 					mark = "*"
 				}
-				fmt.Fprintf(stdout, "%s %s  %s  %s\n", mark, shortID(t.TargetID), trunc(t.Title, 50), t.URL)
+				fmt.Fprintf(stdout, "%s %s  %-8s  %s  %s\n", mark, shortID(t.TargetID), s.ownerLabel(t.TargetID), trunc(t.Title, 50), t.URL)
 			}
 			return nil
 		})
@@ -203,7 +216,7 @@ var tabsCmd = &cobra.Command{
 
 var tabCmd = &cobra.Command{
 	Use:   "tab <id>",
-	Short: "Make a tab current for oko commands (--front also shows it in the window)",
+	Short: "Make a tab your current one (--front also shows it in the window)",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return run(func(s *session) error {
@@ -215,10 +228,10 @@ var tabCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			s.prof.State.Tab = string(t.TargetID)
-			if err := s.prof.Save(); err != nil {
+			if err := s.checkForeign(t.TargetID); err != nil {
 				return err
 			}
+			s.makeCurrent(t.TargetID)
 			if tabFront {
 				_ = proto.TargetActivateTarget{TargetID: t.TargetID}.Call(s.b)
 			}
@@ -228,7 +241,10 @@ var tabCmd = &cobra.Command{
 	},
 }
 
-var tabFront bool
+var (
+	tabFront  bool
+	forceFlag bool
+)
 
 var (
 	openNew  bool
@@ -250,7 +266,7 @@ func normalizeURL(u string) string {
 
 var openCmd = &cobra.Command{
 	Use:   "open <url>",
-	Short: "Navigate the current tab (or --new tab) and wait for load",
+	Short: "Navigate your current tab (or --new tab) and wait for load",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		url := normalizeURL(args[0])
@@ -262,12 +278,13 @@ var openCmd = &cobra.Command{
 				if err != nil {
 					return err
 				}
-				if tabFlag == "" {
-					s.prof.State.Tab = string(p.TargetID)
-					_ = s.prof.Save()
+				s.claim(p.TargetID)
+				s.setCurrent(p.TargetID)
+			} else {
+				s.strict = true
+				if p, err = s.page(); err != nil {
+					return err
 				}
-			} else if p, err = s.page(); err != nil {
-				return err
 			}
 			if err := p.Navigate(url); err != nil {
 				return fmt.Errorf("navigate: %w%s", err, proxyHint(s.prof, url, err))
@@ -325,6 +342,7 @@ var closeCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return run(func(s *session) error {
 			var id proto.TargetTargetID
+			s.strict = true
 			if len(args) == 1 {
 				ts, err := s.tabs()
 				if err != nil {
@@ -334,8 +352,14 @@ var closeCmd = &cobra.Command{
 				if err != nil {
 					return err
 				}
+				if err := s.checkForeign(t.TargetID); err != nil {
+					return err
+				}
 				id = t.TargetID
 			} else {
+				if tabFlag == "" && s.me.Tab == "" && s.me.Key != "default" {
+					return fmt.Errorf("this session has no current tab; give a tab id from 'oko tabs'")
+				}
 				p, err := s.page()
 				if err != nil {
 					return err
@@ -345,9 +369,8 @@ var closeCmd = &cobra.Command{
 			if _, err := (proto.TargetCloseTarget{TargetID: id}).Call(s.b); err != nil {
 				return err
 			}
-			if s.prof.State.Tab == string(id) {
-				s.prof.State.Tab = ""
-				_ = s.prof.Save()
+			if s.me.Tab == string(id) {
+				s.me.Tab, s.me.URL = "", ""
 			}
 			fmt.Fprintf(stdout, "closed %s\n", shortID(id))
 			return nil
@@ -359,7 +382,9 @@ func init() {
 	upCmd.Flags().BoolVar(&upHeadless, "headless", false, "run without a window (remembered until 'oko down')")
 	upCmd.Flags().StringVar(&upProxy, "proxy", "", "upstream proxy for this profile, remembered: http://user:pass@host:port, https://…, socks5://… ('none' to clear)")
 	upCmd.Flags().StringVar(&upLang, "lang", "", "browser language for this profile, remembered (e.g. en-US; 'system' to clear)")
-	openCmd.Flags().BoolVarP(&openNew, "new", "n", false, "open in a new background tab and make it current")
+	openCmd.Flags().BoolVarP(&openNew, "new", "n", false, "open in a new background tab, owned by this session, and make it current")
+	openCmd.Flags().BoolVar(&forceFlag, "force", false, "navigate a tab another session owns")
+	closeCmd.Flags().BoolVar(&forceFlag, "force", false, "close a tab another session owns")
 	tabCmd.Flags().BoolVar(&tabFront, "front", false, "also switch the browser window to this tab (raises Chrome)")
 	openCmd.Flags().BoolVarP(&openSnap, "snap", "s", false, "print a snapshot after load")
 	openCmd.Flags().IntVar(&snapMax, "max", 400, "snapshot item limit (with --snap)")
