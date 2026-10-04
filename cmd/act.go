@@ -167,23 +167,46 @@ func act(fn func(s *session, p *rod.Page) (string, error)) error {
 
 // interactable scrolls el into view and waits briefly until a pointer could
 // hit it, explaining what is in the way when it cannot.
-func interactable(el *rod.Element) error {
+// scrollIntoView scrolls the element into view without waiting for an
+// animation frame. rod's ScrollIntoView (and Click/Hover/Focus, which call it)
+// first waits for requestAnimationFrame, which never fires in a hidden tab:
+// a background tab of headless Chrome, a minimized window.
+func scrollIntoView(el *rod.Element) {
+	_ = proto.DOMScrollIntoViewIfNeeded{ObjectID: el.Object.ObjectID}.Call(el)
+}
+
+// interactable scrolls the element into view and waits (bounded) until a
+// click would land on it; it returns the point to click.
+func interactable(el *rod.Element) (*proto.Point, error) {
 	deadline := time.Now().Add(3 * time.Second)
 	for {
-		_ = el.ScrollIntoView()
-		_, err := el.Interactable()
+		scrollIntoView(el)
+		pt, err := el.Interactable()
 		if err == nil {
-			return nil
+			return pt, nil
 		}
 		if time.Now().After(deadline) {
 			var cov *rod.CoveredError
 			if errors.As(err, &cov) {
-				return fmt.Errorf("element is covered by %s (close the overlay, or use --js to click through)", describe(cov.Element))
+				return nil, fmt.Errorf("element is covered by %s (close the overlay, or use --js to click through)", describe(cov.Element))
 			}
-			return fmt.Errorf("element is not clickable: %v (use --js to click through)", err)
+			return nil, fmt.Errorf("element is not clickable: %v (use --js to click through)", err)
 		}
 		time.Sleep(150 * time.Millisecond)
 	}
+}
+
+// clickAt moves the mouse to the element's point and clicks there, like
+// rod's Element.Click without its animation-frame waits.
+func clickAt(el *rod.Element, pt *proto.Point, btn proto.InputMouseButton, n int) error {
+	if err := el.WaitEnabled(); err != nil {
+		return err
+	}
+	m := el.Page().Mouse
+	if err := m.MoveTo(*pt); err != nil {
+		return err
+	}
+	return m.Click(btn, n)
 }
 
 var (
@@ -218,7 +241,7 @@ var clickCmd = &cobra.Command{
 			}
 			if s.human() {
 				if _, err := el.Interactable(); err != nil {
-					if err := interactable(el); err != nil {
+					if _, err := interactable(el); err != nil {
 						return "", err
 					}
 				}
@@ -227,10 +250,11 @@ var clickCmd = &cobra.Command{
 				}
 				return "clicked " + d + " (human)", nil
 			}
-			if err := interactable(el); err != nil {
+			pt, err := interactable(el)
+			if err != nil {
 				return "", err
 			}
-			if err := el.Click(btn, n); err != nil {
+			if err := clickAt(el, pt, btn, n); err != nil {
 				return "", err
 			}
 			return "clicked " + d, nil
@@ -254,10 +278,11 @@ var hoverCmd = &cobra.Command{
 				}
 				return "hovered " + describe(el) + " (human)", nil
 			}
-			if err := interactable(el); err != nil {
+			pt, err := interactable(el)
+			if err != nil {
 				return "", err
 			}
-			if err := el.Hover(); err != nil {
+			if err := el.Page().Mouse.MoveTo(*pt); err != nil {
 				return "", err
 			}
 			return "hovered " + describe(el), nil
@@ -351,10 +376,8 @@ func fill(s *session, p *rod.Page, el *rod.Element, value string) (string, error
 		}
 		return fmt.Sprintf("filled %s = %q", d, value), nil
 	default:
-		if err := interactable(el); err != nil {
-			// Still fillable without a pointer; focus does not need one.
-			_ = err
-		}
+		// Still fillable when not clickable: focus does not need a pointer.
+		_, _ = interactable(el)
 		if s.human() {
 			if err := s.humanClick(p, el, proto.InputMouseButtonLeft, 1); err != nil {
 				return "", err
@@ -410,7 +433,8 @@ var typeCmd = &cobra.Command{
 				if err != nil {
 					return "", err
 				}
-				if err := el.Focus(); err != nil {
+				scrollIntoView(el)
+				if err := (proto.DOMFocus{ObjectID: el.Object.ObjectID}).Call(el); err != nil {
 					return "", err
 				}
 			}
