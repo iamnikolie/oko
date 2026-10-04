@@ -1,7 +1,10 @@
-.PHONY: build install uninstall test vet fmt clean e2e
+.PHONY: build install uninstall test vet fmt clean e2e skill
 
 BIN := oko
 PREFIX ?= $(HOME)/.local
+# Local agent-config repo that installs cmd/skill.md into every harness's
+# skills dir. Absent on other machines — `make skill` then does nothing.
+AGENTIC_OS ?= $(CURDIR)/../agentic-os
 PKG := github.com/iamnikolie/oko/cmd
 
 # Version stamped into the binary. Falls back to the short commit when the tree
@@ -16,6 +19,16 @@ install: build
 	mkdir -p $(PREFIX)/bin
 	ln -sf $(CURDIR)/$(BIN) $(PREFIX)/bin/$(BIN)
 	@echo "linked $(PREFIX)/bin/$(BIN) -> $(CURDIR)/$(BIN)"
+	@$(MAKE) --no-print-directory skill
+
+# Copy the embedded agent reference into agentic-os and fan it out to the
+# Claude, Codex and Cursor skill dirs.
+skill:
+	@if [ -d "$(AGENTIC_OS)/global/skills" ]; then \
+		mkdir -p "$(AGENTIC_OS)/global/skills/oko" && \
+		cp cmd/skill.md "$(AGENTIC_OS)/global/skills/oko/SKILL.md" && \
+		for h in claude-personal codex cursor; do "$(AGENTIC_OS)/ao" install $$h | head -1; done; \
+	else echo "skill: no $(AGENTIC_OS)/global/skills, skipping"; fi
 
 uninstall:
 	rm -f $(PREFIX)/bin/$(BIN)
