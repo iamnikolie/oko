@@ -1,0 +1,30 @@
+name: Bug report
+description: Something the CLI does wrong
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: The command you ran, what you expected, and what you got instead.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `oko --version`, plus your OS and Chrome version.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Page that reproduces it
+      description: >
+        A URL or, better, a minimal HTML snippet. Redact anything private from
+        `read`/`snap`/`net` output — this is a public issue tracker.
+      render: html
+    validations:
+      required: false
