@@ -43,3 +43,25 @@ changelog:
 release:
   draft: false
   prerelease: auto
+
+# Formula in iamnikolie/homebrew-tap, rewritten on every tag. Needs the
+# HOMEBREW_TAP_TOKEN secret (fine-grained, contents:write on homebrew-tap only).
+brews:
+  - name: oko
+    repository:
+      owner: iamnikolie
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    commit_author:
+      name: Mykola Klitovchenko
+      email: mykola.klitovchenko@gmail.com
+    commit_msg_template: "{{ .ProjectName }} {{ .Version }}"
+    homepage: https://github.com/iamnikolie/oko
+    description: "Browser CLI for coding agents, driving a dedicated Chrome over CDP"
+    license: MIT
+    skip_upload: auto
+    install: |
+      bin.install "oko"
+    test: |
+      assert_match(/^oko version /, shell_output("#{bin}/oko --version"))
