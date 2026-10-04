@@ -79,6 +79,10 @@ func sessionKey() string {
 	if v := os.Getenv("CLAUDE_CODE_SESSION_ID"); v != "" {
 		return v
 	}
+	// Codex sets this in its shell commands; it matches its hooks' session_id.
+	if v := os.Getenv("CODEX_THREAD_ID"); v != "" {
+		return v
+	}
 	return "default"
 }
 
@@ -86,7 +90,7 @@ func init() {
 	pf := rootCmd.PersistentFlags()
 	pf.StringVarP(&profileName, "profile", "p", envOr("OKO_PROFILE", "default"), "browser profile (own Chrome, logins and port) [$OKO_PROFILE]")
 	pf.StringVarP(&tabFlag, "tab", "t", os.Getenv("OKO_TAB"), "tab id prefix to act on instead of the current tab [$OKO_TAB]")
-	pf.StringVar(&sessionFlag, "session", os.Getenv("OKO_SESSION"), "caller identity owning a current tab; default $CLAUDE_CODE_SESSION_ID, else shared 'default' [$OKO_SESSION]")
+	pf.StringVar(&sessionFlag, "session", os.Getenv("OKO_SESSION"), "caller identity owning a current tab; default $CLAUDE_CODE_SESSION_ID or $CODEX_THREAD_ID, else shared 'default' [$OKO_SESSION]")
 	pf.BoolVar(&jsonOutput, "json", false, "JSON output")
 	pf.DurationVar(&timeout, "timeout", 20*time.Second, "overall command timeout")
 	pf.StringVar(&dialogPolicy, "dialog", envOr("OKO_DIALOG", "accept"), "answer confirm/prompt/beforeunload dialogs: accept or dismiss [$OKO_DIALOG]")

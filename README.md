@@ -29,7 +29,7 @@ authenticated proxy (http, https, socks5) via a local relay.
 elements (with an optional note); the agent gets each one as a snapshot ref,
 component and source file (React/Vue/Svelte dev builds), CSS path, box and
 styles, a crop and your note. `oko pick` asks you to point and waits; `oko
-picks` reads what you picked. See [Picks in Claude Code](#picks-in-claude-code)
+picks` reads what you picked. See [Picks in Claude Code and Codex](#picks-in-claude-code-and-codex)
 to have picks arrive with your next message by themselves.
 
 `oko skill` prints the full agent reference (also installed as a Claude Code /
@@ -71,16 +71,16 @@ macOS and Linux. Needs Google Chrome (or Chromium; set `OKO_CHROME` to the binar
 in `~/.oko` (`OKO_HOME` to move it): one Chrome user-data dir per profile,
 screenshots in `~/.oko/shots`.
 
-## Picks in Claude Code
+## Picks in Claude Code and Codex
 
 `oko picks --hook` is a `UserPromptSubmit` hook: each time you send a message,
-Claude Code runs it, and whatever you picked in the browser since your last
+the agent runs it, and whatever you picked in the browser since your last
 message is added to that message's context (picks made in a tab another agent
 session works in go to that session). With nothing picked it prints nothing
 and returns in ~15 ms; it only reads files under `~/.oko`, never starts Chrome,
 and never fails your prompt.
 
-Add it to your user settings, `~/.claude/settings.json` (or
+**Claude Code.** Add it to your user settings, `~/.claude/settings.json` (or
 `$CLAUDE_CONFIG_DIR/settings.json`), for every project, or to a project's
 `.claude/settings.json` for that project only. Merge it into an existing
 `hooks` object rather than replacing it:
@@ -95,12 +95,29 @@ Add it to your user settings, `~/.claude/settings.json` (or
 }
 ```
 
-Use the absolute path (`which oko`) if `oko` is not on the `PATH` Claude Code
-starts with. Check it: run `/hooks` in Claude Code, press Alt+P in the oko
-window, click something, and send any message; the agent's context now holds an
-`<oko-picks>` block. Without the hook (other agents, or by choice) the agent
-reads picks with `oko picks`, waits for them with `oko picks --wait`, or asks
-you with `oko pick`.
+**Codex.** Codex reads the same hook format from `~/.codex/hooks.json` (all
+projects) or `<repo>/.codex/hooks.json` (one project); put the JSON above
+there, merged with any hooks you have. Codex runs a new or changed hook only
+after you trust it: open `/hooks` in Codex and trust `oko picks --hook`. The
+same in `~/.codex/config.toml` instead of `hooks.json`:
+
+```toml
+[[hooks.UserPromptSubmit]]
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = "oko picks --hook"
+timeout = 5
+```
+
+Use the absolute path (`which oko`) if `oko` is not on the `PATH` the agent
+starts with. Check it: open `/hooks` (both agents list hooks there), press
+Alt+P in the oko window, click something, and send any message; the agent's
+context now holds an `<oko-picks>` block. Picks reach the session that works in
+the tab: oko keys sessions by `$CLAUDE_CODE_SESSION_ID` or `$CODEX_THREAD_ID`,
+which match the `session_id` the hook receives.
+
+Without the hook (other agents, or by choice) the agent reads picks with `oko
+picks`, waits for them with `oko picks --wait`, or asks you with `oko pick`.
 
 The picker itself starts with the browser. `oko watch off` turns it off for a
 profile, `oko watch on` back on.
@@ -111,7 +128,7 @@ profile, `oko watch on` back on.
   127.0.0.1. oko finds it through the profile's `DevToolsActivePort` file and
   checks it, so it never attaches to some other Chrome.
 - Current tab is per caller session (`--session` / `$OKO_SESSION`, else
-  `$CLAUDE_CODE_SESSION_ID`, else a shared `default`), stored in
+  `$CLAUDE_CODE_SESSION_ID` or `$CODEX_THREAD_ID`, else a shared `default`), stored in
   `profiles/<name>/sessions/`. Agents sharing a profile get their own tabs;
   navigating or closing another session's tab needs `--force`.
 - Snapshots are built in the page: interactive elements get refs (`e12`) kept

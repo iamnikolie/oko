@@ -21,7 +21,7 @@ oko snap                         # look again
 ```
 
 Your current tab is yours alone: oko keys it by session (`--session` /
-`$OKO_SESSION`, else `$CLAUDE_CODE_SESSION_ID`), so other agents on the same
+`$OKO_SESSION`, else `$CLAUDE_CODE_SESSION_ID` / `$CODEX_THREAD_ID`), so other agents on the same
 profile get their own tabs and cannot move yours. See "Tabs" below.
 
 Refs (`e12`) stay valid while the element exists; after navigation run `snap`
@@ -175,8 +175,8 @@ oko picks --clear        # drop all picks and their badges
 oko watch [status|start|stop|on|off]
 ```
 
-With the Claude Code hook (`UserPromptSubmit` → `oko picks --hook`) picks made
-since the last message arrive with the user's next prompt by themselves.
+With the `UserPromptSubmit` hook (`oko picks --hook`, Claude Code or Codex) picks
+made since the last message arrive with the user's next prompt by themselves.
 Each pick looks like:
 
 ```
@@ -217,7 +217,7 @@ oko status | up [--headless] [--lang en-US] [--proxy URL] | down   # --lang/--pr
 
 - Sessions: each caller has its own current tab and owns the tabs it opened.
   The key is `--session <name>` / `$OKO_SESSION`, else `$CLAUDE_CODE_SESSION_ID`
-  (set by Claude Code), else a shared `default` (a human in a terminal). A
+  (set by Claude Code) or `$CODEX_THREAD_ID` (Codex), else a shared `default` (a human in a terminal). A
   session's first `oko open` takes a fresh tab, never one another session holds.
   Subagents inherit the parent's `CLAUDE_CODE_SESSION_ID`: parallel subagents
   that browse must each pass their own `--session <name>` on every call.
