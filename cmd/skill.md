@@ -21,7 +21,7 @@ oko snap                         # look again
 ```
 
 Your current tab is yours alone: oko keys it by session (`--session` /
-`$OKO_SESSION`, else `$CLAUDE_CODE_SESSION_ID` / `$CODEX_THREAD_ID`), so other agents on the same
+`$OKO_SESSION`, else `$CURSOR_CONVERSATION_ID` / `$CLAUDE_CODE_SESSION_ID` / `$CODEX_THREAD_ID`), so other agents on the same
 profile get their own tabs and cannot move yours. See "Tabs" below.
 
 Refs (`e12`) stay valid while the element exists; after navigation run `snap`
@@ -179,6 +179,9 @@ With the `UserPromptSubmit` hook (`oko picks --hook`, Claude Code or Codex) pick
 made since the last message arrive with the user's next prompt by themselves.
 `oko hook install` sets it up (`oko hook status` checks); suggest it when the
 user wants to show you elements and it is not installed.
+Cursor has no such hook (its prompt hook cannot add context): there, when the
+user's message points at something on a page ("this button", "вот это", "here"),
+run `oko picks` before answering — empty output means nothing was picked.
 Each pick looks like:
 
 ```
@@ -220,8 +223,8 @@ oko status | up [--headless] [--lang en-US] [--proxy URL] | down   # --lang/--pr
 ```
 
 - Sessions: each caller has its own current tab and owns the tabs it opened.
-  The key is `--session <name>` / `$OKO_SESSION`, else `$CLAUDE_CODE_SESSION_ID`
-  (set by Claude Code) or `$CODEX_THREAD_ID` (Codex), else a shared `default` (a human in a terminal). A
+  The key is `--session <name>` / `$OKO_SESSION`, else `$CURSOR_CONVERSATION_ID`
+  (Cursor), `$CLAUDE_CODE_SESSION_ID` (Claude Code) or `$CODEX_THREAD_ID` (Codex), else a shared `default` (a human in a terminal). A
   session's first `oko open` takes a fresh tab, never one another session holds.
   Subagents inherit the parent's `CLAUDE_CODE_SESSION_ID`: parallel subagents
   that browse must each pass their own `--session <name>` on every call.

@@ -111,7 +111,7 @@ By hand, use the absolute path (`which oko`) if `oko` is not on the `PATH` the
 agent starts with (`oko hook install` writes it). Check it: open `/hooks` (both agents list hooks there), press
 Alt+P in the oko window, click something, and send any message; the agent's
 context now holds an `<oko-picks>` block. Picks reach the session that works in
-the tab: oko keys sessions by `$CLAUDE_CODE_SESSION_ID` or `$CODEX_THREAD_ID`,
+the tab: oko keys sessions by `$CURSOR_CONVERSATION_ID`, `$CLAUDE_CODE_SESSION_ID` or `$CODEX_THREAD_ID`,
 which match the `session_id` the hook receives.
 
 Without the hook (other agents, or by choice) the agent reads picks with `oko
@@ -126,7 +126,7 @@ profile, `oko watch on` back on.
   127.0.0.1. oko finds it through the profile's `DevToolsActivePort` file and
   checks it, so it never attaches to some other Chrome.
 - Current tab is per caller session (`--session` / `$OKO_SESSION`, else
-  `$CLAUDE_CODE_SESSION_ID` or `$CODEX_THREAD_ID`, else a shared `default`), stored in
+  `$CURSOR_CONVERSATION_ID`, `$CLAUDE_CODE_SESSION_ID` or `$CODEX_THREAD_ID`, else a shared `default`), stored in
   `profiles/<name>/sessions/`. Agents sharing a profile get their own tabs;
   navigating or closing another session's tab needs `--force`.
 - Snapshots are built in the page: interactive elements get refs (`e12`) kept

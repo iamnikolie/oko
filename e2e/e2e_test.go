@@ -48,6 +48,7 @@ func TestMain(m *testing.M) {
 	os.Setenv("OKO_SESSION", "")
 	os.Unsetenv("CLAUDE_CODE_SESSION_ID")
 	os.Unsetenv("CODEX_THREAD_ID")
+	os.Unsetenv("CURSOR_CONVERSATION_ID")
 
 	base = serve("localhost", http.FileServer(http.Dir("testdata")))
 	alt = serve("127.0.0.1", http.FileServer(http.Dir("testdata")))

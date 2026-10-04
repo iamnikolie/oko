@@ -76,6 +76,13 @@ func sessionKey() string {
 	if sessionFlag != "" {
 		return sessionFlag
 	}
+	// Cursor's agent exports this in every shell command, per chat; it equals
+	// its hooks' conversation_id. Checked first: a Cursor agent started from a
+	// Claude Code shell inherits CLAUDE_CODE_SESSION_ID, and Cursor's id is the
+	// more specific one.
+	if v := os.Getenv("CURSOR_CONVERSATION_ID"); v != "" {
+		return v
+	}
 	if v := os.Getenv("CLAUDE_CODE_SESSION_ID"); v != "" {
 		return v
 	}
@@ -90,7 +97,7 @@ func init() {
 	pf := rootCmd.PersistentFlags()
 	pf.StringVarP(&profileName, "profile", "p", envOr("OKO_PROFILE", "default"), "browser profile (own Chrome, logins and port) [$OKO_PROFILE]")
 	pf.StringVarP(&tabFlag, "tab", "t", os.Getenv("OKO_TAB"), "tab id prefix to act on instead of the current tab [$OKO_TAB]")
-	pf.StringVar(&sessionFlag, "session", os.Getenv("OKO_SESSION"), "caller identity owning a current tab; default $CLAUDE_CODE_SESSION_ID or $CODEX_THREAD_ID, else shared 'default' [$OKO_SESSION]")
+	pf.StringVar(&sessionFlag, "session", os.Getenv("OKO_SESSION"), "caller identity owning a current tab; default $CURSOR_CONVERSATION_ID, $CLAUDE_CODE_SESSION_ID or $CODEX_THREAD_ID, else shared 'default' [$OKO_SESSION]")
 	pf.BoolVar(&jsonOutput, "json", false, "JSON output")
 	pf.DurationVar(&timeout, "timeout", 20*time.Second, "overall command timeout")
 	pf.StringVar(&dialogPolicy, "dialog", envOr("OKO_DIALOG", "accept"), "answer confirm/prompt/beforeunload dialogs: accept or dismiss [$OKO_DIALOG]")
