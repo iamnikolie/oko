@@ -5,7 +5,7 @@ requests are welcome, and so is a plain question in an issue.
 
 ## Reporting a bug
 
-Include the output of `oko version`, your OS and Chrome version, the exact
+Include the output of `oko --version`, your OS and Chrome version, the exact
 command you ran, and what you expected instead. A minimal HTML page that
 reproduces the problem is worth more than a description. **Redact anything
 private** from `read`/`snap`/`net` output before pasting it.
