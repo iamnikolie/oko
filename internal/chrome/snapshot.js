@@ -116,7 +116,7 @@ function (opts) {
     if (el.getAttribute('aria-selected') === 'true' || el.getAttribute('aria-current') && el.getAttribute('aria-current') !== 'false') a.selected = true;
     if (role === 'link') {
       const h = el.getAttribute('href') || '';
-      if (h && !h.startsWith('javascript:') && h !== '#') {
+      if (h && !/^\s*(javascript|data|vbscript):/i.test(h) && h !== '#') {
         let s = h;
         try {
           const u = new URL(h, el.ownerDocument.baseURI);

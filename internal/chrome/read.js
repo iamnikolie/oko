@@ -11,7 +11,7 @@ function (opts) {
   function shortURL(h) {
     try {
       const u = new URL(h, doc.baseURI);
-      if (u.protocol === 'javascript:') return '';
+      if (/^(javascript|data|vbscript):$/.test(u.protocol)) return '';
       return u.origin === location.origin ? (u.pathname + u.search + u.hash) : u.href;
     } catch (e) { return h; }
   }
@@ -120,7 +120,7 @@ function (opts) {
     return !!t.querySelector('th, thead');
   }
   function cellText(c) {
-    return ws(render(c, { inTable: true })).trim().replace(/\|/g, '\\|');
+    return ws(render(c, { inTable: true })).trim().replace(/\\/g, '\\\\').replace(/\|/g, '\\|');
   }
   function renderTable(t) {
     const rows = ownRows(t).filter((r) => { const st = getComputedStyle(r); return !hidden(r, st); });

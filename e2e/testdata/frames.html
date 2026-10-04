@@ -2,5 +2,9 @@
 <h1>Checkout</h1>
 <p>Total: $42</p>
 <iframe id="pay" title="Payment" width="420" height="220" style="border:1px solid #ccc"></iframe>
-<script>document.getElementById('pay').src = location.search.slice(1) + '/frame-child.html';</script>
+<script>
+// The test passes the other test server's origin; accept only a loopback one.
+const m = /^\?(http:\/\/127\.0\.0\.1:\d+)$/.exec(location.search);
+if (m) document.getElementById('pay').src = m[1] + '/frame-child.html';
+</script>
 </main></body></html>
