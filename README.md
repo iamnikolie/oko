@@ -80,10 +80,22 @@ session works in go to that session). With nothing picked it prints nothing
 and returns in ~15 ms; it only reads files under `~/.oko`, never starts Chrome,
 and never fails your prompt.
 
-**Claude Code.** Add it to your user settings, `~/.claude/settings.json` (or
-`$CLAUDE_CONFIG_DIR/settings.json`), for every project, or to a project's
-`.claude/settings.json` for that project only. Merge it into an existing
-`hooks` object rather than replacing it:
+Install it with one command:
+
+```sh
+oko hook install            # every agent found: Claude Code and/or Codex, user-wide
+oko hook install --project  # this repo only: .claude/settings.json, .codex/hooks.json
+oko hook status | uninstall # --agent claude|codex|all, --file <path>, --dry-run
+```
+
+It edits `$CLAUDE_CONFIG_DIR/settings.json` (default `~/.claude/settings.json`)
+and `$CODEX_HOME/hooks.json` (default `~/.codex/hooks.json`), keeps every other
+setting and hook, saves the previous file as `<file>.oko.bak`, and changes
+nothing when the hook is already there. Codex runs a new hook only after you
+trust it: open `/hooks` in Codex once.
+
+By hand, the entry is the same for both agents (Claude Code `settings.json`,
+Codex `hooks.json`; Codex also accepts the TOML form in `config.toml`):
 
 ```json
 {
@@ -95,22 +107,8 @@ and never fails your prompt.
 }
 ```
 
-**Codex.** Codex reads the same hook format from `~/.codex/hooks.json` (all
-projects) or `<repo>/.codex/hooks.json` (one project); put the JSON above
-there, merged with any hooks you have. Codex runs a new or changed hook only
-after you trust it: open `/hooks` in Codex and trust `oko picks --hook`. The
-same in `~/.codex/config.toml` instead of `hooks.json`:
-
-```toml
-[[hooks.UserPromptSubmit]]
-[[hooks.UserPromptSubmit.hooks]]
-type = "command"
-command = "oko picks --hook"
-timeout = 5
-```
-
-Use the absolute path (`which oko`) if `oko` is not on the `PATH` the agent
-starts with. Check it: open `/hooks` (both agents list hooks there), press
+By hand, use the absolute path (`which oko`) if `oko` is not on the `PATH` the
+agent starts with (`oko hook install` writes it). Check it: open `/hooks` (both agents list hooks there), press
 Alt+P in the oko window, click something, and send any message; the agent's
 context now holds an `<oko-picks>` block. Picks reach the session that works in
 the tab: oko keys sessions by `$CLAUDE_CODE_SESSION_ID` or `$CODEX_THREAD_ID`,

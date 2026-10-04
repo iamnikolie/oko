@@ -177,6 +177,8 @@ oko watch [status|start|stop|on|off]
 
 With the `UserPromptSubmit` hook (`oko picks --hook`, Claude Code or Codex) picks
 made since the last message arrive with the user's next prompt by themselves.
+`oko hook install` sets it up (`oko hook status` checks); suggest it when the
+user wants to show you elements and it is not installed.
 Each pick looks like:
 
 ```
