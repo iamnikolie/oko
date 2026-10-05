@@ -106,3 +106,11 @@ func TestClickInHiddenTab(t *testing.T) {
 	as(t, "hidden-tab", "--timeout", "8s", "hover", "text=Refund")
 	as(t, "hidden-tab", "close")
 }
+
+func TestClickAt(t *testing.T) {
+	oko(t, "open", base+"/canvas.html")
+	oko(t, "click", "#c", "--at", "0.25,0.75")
+	must(t, oko(t, "eval", "document.title"), "0.25,0.75")
+	oko(t, "--human", "click", "#c", "--at", "0.8,0.2")
+	must(t, oko(t, "eval", "document.title"), "0.80,0.20")
+}

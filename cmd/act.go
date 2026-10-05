@@ -210,6 +210,7 @@ func clickAt(el *rod.Element, pt *proto.Point, btn proto.InputMouseButton, n int
 }
 
 var (
+	clickAt_    string
 	clickJS     bool
 	clickDouble bool
 	clickRight  bool
@@ -239,20 +240,32 @@ var clickCmd = &cobra.Command{
 			if clickDouble {
 				n = 2
 			}
+			at, err := parseAt(clickAt_)
+			if err != nil {
+				return "", err
+			}
 			if s.human() {
 				if _, err := el.Interactable(); err != nil {
 					if _, err := interactable(el); err != nil {
 						return "", err
 					}
 				}
-				if err := s.humanClick(p, el, btn, n); err != nil {
+				if err := s.humanClickAt(p, el, btn, n, at); err != nil {
 					return "", err
 				}
-				return "clicked " + d + " (human)", nil
+				return "clicked " + d + atNote(at) + " (human)", nil
 			}
 			pt, err := interactable(el)
 			if err != nil {
 				return "", err
+			}
+			if at != nil {
+				x, y, w, h, err := elementBox(el)
+				if err != nil {
+					return "", err
+				}
+				pt = &proto.Point{X: x + w*at[0], Y: y + h*at[1]}
+				d += atNote(at)
 			}
 			if err := clickAt(el, pt, btn, n); err != nil {
 				return "", err
@@ -700,6 +713,7 @@ func init() {
 	clickCmd.Flags().BoolVar(&clickJS, "js", false, "dispatch element.click() in JS (ignores overlays, no real pointer)")
 	clickCmd.Flags().BoolVar(&clickDouble, "double", false, "double click")
 	clickCmd.Flags().BoolVar(&clickRight, "right", false, "right click")
+	clickCmd.Flags().StringVar(&clickAt_, "at", "", "click this point inside the element, as fractions of its box: 0.5,0.4 (canvases, images, maps)")
 	typeCmd.Flags().StringVar(&typeInto, "into", "", "focus this element first")
 	typeCmd.Flags().BoolVar(&typeSubmit, "submit", false, "press Enter after typing")
 	waitCmd.Flags().StringVar(&waitText, "text", "", "page text contains (case-insensitive)")
@@ -754,4 +768,28 @@ func humanScrollCmd(s *session, p *rod.Page, where string, px int) (string, erro
 	}
 	y, h, _ = pos()
 	return fmt.Sprintf("scroll %d/%d (human)", int(y), int(h)), nil
+}
+
+// parseAt parses --at "fx,fy" (fractions of the element box, 0..1).
+func parseAt(v string) (*[2]float64, error) {
+	if v == "" {
+		return nil, nil
+	}
+	a, b, ok := strings.Cut(v, ",")
+	if !ok {
+		return nil, fmt.Errorf("--at %q: want fx,fy fractions, e.g. 0.5,0.4", v)
+	}
+	fx, err1 := strconv.ParseFloat(strings.TrimSpace(a), 64)
+	fy, err2 := strconv.ParseFloat(strings.TrimSpace(b), 64)
+	if err1 != nil || err2 != nil || fx < 0 || fx > 1 || fy < 0 || fy > 1 {
+		return nil, fmt.Errorf("--at %q: want fx,fy fractions within 0..1", v)
+	}
+	return &[2]float64{fx, fy}, nil
+}
+
+func atNote(at *[2]float64) string {
+	if at == nil {
+		return ""
+	}
+	return fmt.Sprintf(" at %.2f,%.2f", at[0], at[1])
 }

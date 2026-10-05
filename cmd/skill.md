@@ -56,7 +56,7 @@ pointer cursor or tabindex (framework buttons).
 
 | command | what |
 |---|---|
-| `oko click <t>` | real mouse click; waits until nothing covers it. `--js` = element.click() through overlays, `--double`, `--right` |
+| `oko click <t>` | real mouse click; waits until nothing covers it. `--js` = element.click() through overlays, `--double`, `--right`, `--at 0.5,0.4` = that point of the element's box (canvas, image, map, auto-mask) |
 | `oko fill <t> <value>` | replace value; works for inputs, textarea, contenteditable, `<select>` (option label or value), checkbox/radio/switch (`true`/`false`), date/time/color |
 | `oko type <text>` | insert at cursor without clearing; `--into <t>` focus first, `--submit` press Enter |
 | `oko press <keys>...` | `Enter`, `Tab`, `Escape`, `Shift+Tab`, `Control+a`, `Meta+Enter`, `ArrowDown`… in order |

@@ -188,6 +188,12 @@ func (s *session) humanWheel(p *rod.Page, dy float64) error {
 // humanClick scrolls the element into view, moves there, and clicks a random
 // point in its inner area with a human press duration.
 func (s *session) humanClick(p *rod.Page, el *rod.Element, button proto.InputMouseButton, count int) error {
+	return s.humanClickAt(p, el, button, count, nil)
+}
+
+// humanClickAt is humanClick at a fixed point inside the element (fractions of
+// its box); nil picks a random point in the inner area.
+func (s *session) humanClickAt(p *rod.Page, el *rod.Element, button proto.InputMouseButton, count int, at *[2]float64) error {
 	if err := s.humanScrollTo(p, el); err != nil {
 		return err
 	}
@@ -198,6 +204,9 @@ func (s *session) humanClick(p *rod.Page, el *rod.Element, button proto.InputMou
 	}
 	tx := x + w*(0.25+rand.Float64()*0.5)
 	ty := y + h*(0.3+rand.Float64()*0.4)
+	if at != nil {
+		tx, ty = x+w*at[0], y+h*at[1]
+	}
 	if err := s.humanMove(p, tx, ty); err != nil {
 		return err
 	}

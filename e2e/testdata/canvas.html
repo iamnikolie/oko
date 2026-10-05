@@ -1,0 +1,11 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>canvas</title>
+<style>body{margin:0} #c{position:absolute;left:100px;top:80px;width:400px;height:200px;background:#ddd}</style>
+<div id="c"></div>
+<script>
+document.getElementById('c').addEventListener('click', e => {
+  const r = e.currentTarget.getBoundingClientRect();
+  document.title = ((e.clientX - r.left) / r.width).toFixed(2) + ',' + ((e.clientY - r.top) / r.height).toFixed(2);
+});
+</script>
