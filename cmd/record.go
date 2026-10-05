@@ -109,6 +109,9 @@ func recordStart(s *session) error {
 	if err != nil {
 		return err
 	}
+	// A hidden tab paints no frames, so the screencast would capture one
+	// still and nothing after it.
+	s.ensureVisible(p)
 	tab := string(p.TargetID)
 	if pid := s.prof.State.Recorders[tab]; pid != 0 && syscall.Kill(pid, 0) == nil {
 		return fmt.Errorf("already recording this tab (pid %d); 'oko record stop' first", pid)

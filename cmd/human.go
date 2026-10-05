@@ -56,8 +56,26 @@ func viewportSize(p *rod.Page) (float64, float64) {
 	return a[0].Num(), a[1].Num()
 }
 
+// ensureVisible activates a hidden tab before human input. A hidden tab draws
+// no frames, and Chrome acknowledges a stream of mouse-moved or wheel events
+// only on the next frame, so Input.dispatchMouseEvent blocks until the command
+// times out. A single plain move (non-human) still gets through, which is why
+// only --human hung. Activating raises Chrome, so only do it when hidden.
+func (s *session) ensureVisible(p *rod.Page) {
+	if r, err := p.Eval(`() => document.visibilityState`); err == nil && r.Value.Str() == "hidden" {
+		_ = proto.TargetActivateTarget{TargetID: p.TargetID}.Call(s.b)
+		for i := 0; i < 20; i++ {
+			if r, err := p.Eval(`() => document.visibilityState`); err != nil || r.Value.Str() != "hidden" {
+				return
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+}
+
 // humanMove moves the mouse along a cubic Bézier curve with eased timing.
 func (s *session) humanMove(p *rod.Page, tx, ty float64) error {
+	s.ensureVisible(p)
 	fx, fy := s.mousePos(p)
 	dx, dy := tx-fx, ty-fy
 	dist := math.Hypot(dx, dy)
@@ -143,6 +161,7 @@ func (s *session) humanScrollTo(p *rod.Page, el *rod.Element) error {
 
 // humanWheel scrolls by dy pixels in uneven wheel ticks with short pauses.
 func (s *session) humanWheel(p *rod.Page, dy float64) error {
+	s.ensureVisible(p)
 	x, y := s.mousePos(p)
 	dir := 1.0
 	if dy < 0 {

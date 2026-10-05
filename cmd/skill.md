@@ -99,7 +99,8 @@ oko record stop -o demo.gif       # or demo.mp4; prints path, frames, duration, 
 oko record status
 ```
 
-Frames come from Chrome's screencast (only when the page repaints), idle gaps
+A hidden tab (another tab in front, minimized window) is activated first, since it
+paints no frames. Frames come from Chrome's screencast (only when the page repaints), idle gaps
 are capped at 2 s, the last frame is held 1.5 s. `--width` (960) and `--fps`
 (12) on `stop`. ffmpeg gives a good palette; without it a pure-Go GIF encoder
 is used (MP4 needs ffmpeg). Use `--human` while recording so the pointer moves
@@ -112,7 +113,8 @@ profile's default): `click`/`hover` scroll by wheel, move the mouse along a
 curved path and press at a random point inside the element; `fill`/`type`
 type with uneven rhythm; `scroll` uses wheel ticks with reading pauses, and
 `scroll bottom --human` keeps going while an infinite list loads. Slower
-(~1–3 s per action). It does not replace pacing: on LinkedIn-like sites keep
+(~1–3 s per action). A hidden tab is activated first (raises Chrome): Chrome acks
+streamed mouse/wheel events only on a painted frame, so they would hang there. It does not replace pacing: on LinkedIn-like sites keep
 page loads few and spaced (seconds to tens of seconds apart), read-only unless
 the user asked for an action.
 
