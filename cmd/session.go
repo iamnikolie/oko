@@ -30,6 +30,9 @@ type session struct {
 	// looked is set once the command resolved the caller's current tab, so
 	// its URL is recorded for the next command's drift check.
 	looked bool
+	// launched is set when this command started the browser: its startup
+	// about:blank tab is free for the taking.
+	launched bool
 
 	mu    sync.Mutex
 	notes []string // dialogs answered during the command
@@ -56,10 +59,12 @@ func connect(ctx context.Context, launch bool) (*session, error) {
 			return nil, fmt.Errorf("chrome for profile %s is running (pid %d) but its debugging port does not answer: %v; 'oko down' restarts it", p.Name, p.PID(), err)
 		}
 	}
+	launched := false
 	if err != nil {
 		if !launch {
 			return nil, errNotRunning
 		}
+		launched = true
 		ws, err = p.Launch(ctx, p.State.Headless)
 		if err != nil {
 			return nil, err
@@ -70,7 +75,7 @@ func connect(ctx context.Context, launch bool) (*session, error) {
 	if err := b.Connect(); err != nil {
 		return nil, fmt.Errorf("attach to chrome on port %d: %w", p.State.Port, err)
 	}
-	return &session{ctx: ctx, prof: p, b: b, me: p.Session(sessionKey())}, nil
+	return &session{ctx: ctx, prof: p, b: b, me: p.Session(sessionKey()), launched: launched}, nil
 }
 
 // run is the common wrapper: timeout, attach (auto-start), run fn.
@@ -271,6 +276,23 @@ func (s *session) freeTab(ts []*proto.TargetTargetInfo) *proto.TargetTargetInfo 
 		if s.me.Key == "default" || t.URL == "about:blank" || t.URL == "chrome://newtab/" {
 			return t
 		}
+	}
+	return nil
+}
+
+// startupTab returns the blank tab Chrome opened at launch when this command
+// started the browser, so a first 'open --new' takes it instead of leaving it
+// behind in a second window.
+func (s *session) startupTab() *proto.TargetTargetInfo {
+	if !s.launched {
+		return nil
+	}
+	ts, err := s.tabs()
+	if err != nil || len(ts) != 1 {
+		return nil
+	}
+	if t := ts[0]; t.URL == "about:blank" && s.owner(t.TargetID) == "" {
+		return t
 	}
 	return nil
 }

@@ -61,3 +61,27 @@ func TestSessionDriftNote(t *testing.T) {
 	mustNot(t, as(t, "da", "eval", "1"), "navigated since")
 	as(t, "da", "close")
 }
+
+// A cold 'open --new' takes Chrome's startup blank tab instead of leaving it
+// behind next to a second window.
+func TestColdOpenNewTakesStartupTab(t *testing.T) {
+	const prof = "coldnew"
+	// Remember headless for the profile, then stop it so 'open' starts it.
+	oko(t, "--profile", prof, "up", "--headless")
+	oko(t, "--profile", prof, "down")
+	defer oko(t, "--profile", prof, "down")
+
+	must(t, oko(t, "--profile", prof, "open", base+"/form.html", "--new"), "started chrome", "/form.html")
+	ls := oko(t, "--profile", prof, "tabs")
+	if n := len(strings.Split(strings.TrimSpace(ls), "\n")); n != 1 {
+		t.Fatalf("want one tab after a cold open --new, got %d:\n%s", n, ls)
+	}
+	must(t, ls, "* ", "  you", "/form.html")
+	a := tabID(strings.TrimPrefix(ls, "* "))
+
+	// Once running, --new still opens a separate tab.
+	b := tabID(oko(t, "--profile", prof, "open", base+"/article.html", "--new"))
+	if a == b {
+		t.Fatalf("second --new reused tab %s", a)
+	}
+}

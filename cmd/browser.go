@@ -278,7 +278,14 @@ var openCmd = &cobra.Command{
 		return run(func(s *session) error {
 			var p *rod.Page
 			var err error
-			if openNew {
+			if t := s.startupTab(); openNew && t != nil {
+				if p, err = s.b.PageFromTarget(t.TargetID); err != nil {
+					return err
+				}
+				s.watchDialogs(p)
+				s.claim(p.TargetID)
+				s.setCurrent(p.TargetID)
+			} else if openNew {
 				p, err = s.b.Page(proto.TargetCreateTarget{URL: "about:blank", NewWindow: true, Background: true})
 				if err != nil {
 					return err
