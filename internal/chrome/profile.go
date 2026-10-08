@@ -44,6 +44,57 @@ type State struct {
 	Holders map[string]int `json:"holders,omitempty"`
 	// NoWatch keeps the element-picker watcher from starting with the browser.
 	NoWatch bool `json:"no_watch,omitempty"`
+	// Idle is how long the browser may go without an oko command before it
+	// is closed: a duration ("30m"), "off", or empty for DefaultIdle.
+	Idle string `json:"idle,omitempty"`
+}
+
+// DefaultIdle closes a browser nobody has driven for this long. Logins stay
+// in the profile and the next command starts it again.
+const DefaultIdle = time.Hour
+
+// IdleTTL is the profile's idle limit; 0 means never close.
+func (p *Profile) IdleTTL() time.Duration {
+	switch p.State.Idle {
+	case "":
+		return DefaultIdle
+	case "off", "0":
+		return 0
+	}
+	d, err := time.ParseDuration(p.State.Idle)
+	if err != nil || d < 0 {
+		return DefaultIdle
+	}
+	return d
+}
+
+func (p *Profile) lastUsedPath() string { return filepath.Join(p.Dir, "last_used") }
+
+// Touch marks the browser as just used.
+func (p *Profile) Touch() {
+	now := time.Now()
+	if os.Chtimes(p.lastUsedPath(), now, now) != nil {
+		_ = os.WriteFile(p.lastUsedPath(), nil, 0o600)
+	}
+}
+
+// LastUsed is when an oko command last drove the browser (zero if never).
+func (p *Profile) LastUsed() time.Time {
+	fi, err := os.Stat(p.lastUsedPath())
+	if err != nil {
+		return time.Time{}
+	}
+	return fi.ModTime()
+}
+
+// Frontmost reports whether the profile's Chrome is the app the user is
+// looking at (macOS, windowed); a human using the window keeps it alive.
+func (p *Profile) Frontmost() bool {
+	if runtime.GOOS != "darwin" || p.State.Headless {
+		return false
+	}
+	pid := p.PID()
+	return pid != 0 && frontmostPID() == pid
 }
 
 type Profile struct {
@@ -219,6 +270,9 @@ func (p *Profile) Launch(ctx context.Context, headless bool) (string, error) {
 		"--no-first-run",
 		"--no-default-browser-check",
 		"--disable-features=Translate,MediaRouter",
+		// A debugging port makes navigator.webdriver true, which sites read
+		// as a bot; the window is a person's browser as much as an agent's.
+		"--disable-blink-features=AutomationControlled",
 		// Background tabs otherwise freeze timers and rendering, which
 		// stalls screenshots and waits on a tab the agent is not looking at.
 		"--disable-background-timer-throttling",

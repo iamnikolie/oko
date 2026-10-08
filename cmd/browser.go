@@ -7,7 +7,6 @@ import (
 	"os"
 	"regexp"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/go-rod/rod"
@@ -20,6 +19,7 @@ var (
 	upHeadless bool
 	upLang     string
 	upProxy    string
+	upIdle     string
 )
 
 var upCmd = &cobra.Command{
@@ -43,6 +43,15 @@ var upCmd = &cobra.Command{
 			if upLang == "system" {
 				p.State.Lang = ""
 			}
+			_ = p.Save()
+		}
+		if upIdle != "" {
+			if upIdle != "off" && upIdle != "0" {
+				if d, err := time.ParseDuration(upIdle); err != nil || d <= 0 {
+					return fmt.Errorf("--idle: want a duration like 30m or 2h, or off")
+				}
+			}
+			p.State.Idle = upIdle
 			_ = p.Save()
 		}
 		proxyNote := ""
@@ -76,18 +85,20 @@ var upCmd = &cobra.Command{
 				}
 			}
 			_ = ensureWatch(p, false)
-			fmt.Fprintf(stdout, "already running: profile %s, port %d%s\n", p.Name, p.State.Port, msg)
+			used(p)
+			fmt.Fprintf(stdout, "already running: profile %s, port %d, %s%s\n", p.Name, p.State.Port, idleNote(p), msg)
 			return nil
 		}
 		if _, err := p.Launch(ctx, upHeadless); err != nil {
 			return err
 		}
 		_ = ensureWatch(p, false)
+		used(p)
 		mode := "window"
 		if upHeadless {
 			mode = "headless"
 		}
-		fmt.Fprintf(stdout, "started: profile %s, port %d, %s\nprofile dir: %s\n", p.Name, p.State.Port, mode, p.UserDataDir())
+		fmt.Fprintf(stdout, "started: profile %s, port %d, %s, %s\nprofile dir: %s\n", p.Name, p.State.Port, mode, idleNote(p), p.UserDataDir())
 		if p.State.Proxy != "" {
 			fmt.Fprintf(stdout, "proxy: %s via relay 127.0.0.1:%d\n", chrome.RedactProxy(p.State.Proxy), p.RelayPort())
 		}
@@ -106,29 +117,26 @@ var downCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		pid := p.PID()
-		if s, err := connect(ctx, false); err == nil {
-			_ = proto.BrowserClose{}.Call(s.b)
-		} else if pid == 0 {
-			p.StopRelay()
+		ran, err := stopBrowser(ctx, p)
+		if err != nil {
+			return err
+		}
+		if !ran {
 			fmt.Fprintln(stdout, "not running")
 			return nil
-		} else {
-			_ = syscall.Kill(pid, syscall.SIGTERM)
-		}
-		for i := 0; i < 50 && p.PID() != 0; i++ {
-			time.Sleep(100 * time.Millisecond)
-		}
-		if pid := p.PID(); pid != 0 {
-			return fmt.Errorf("chrome (pid %d) did not exit", pid)
-		}
-		p.StopRelay()
-		if pid := watchPID(p); pid != 0 {
-			_ = syscall.Kill(pid, syscall.SIGTERM)
 		}
 		fmt.Fprintln(stdout, "stopped")
 		return nil
 	},
+}
+
+// idleNote describes when the browser closes on its own.
+func idleNote(p *chrome.Profile) string {
+	ttl := p.IdleTTL()
+	if ttl == 0 {
+		return "never closes when idle"
+	}
+	return "closes after " + shortDur(ttl) + " idle"
 }
 
 var statusCmd = &cobra.Command{
@@ -147,7 +155,11 @@ var statusCmd = &cobra.Command{
 		me := p.Session(sessionKey())
 		if jsonOutput {
 			out := map[string]interface{}{"profile": p.Name, "port": p.State.Port, "running": running,
-				"headless": p.State.Headless, "dir": p.UserDataDir(), "session": me.Key, "tab": shortTab(me.Tab)}
+				"headless": p.State.Headless, "dir": p.UserDataDir(), "session": me.Key, "tab": shortTab(me.Tab),
+				"idle_limit": p.IdleTTL().String()}
+			if t := p.LastUsed(); !t.IsZero() {
+				out["last_used"] = t.Format(time.RFC3339)
+			}
 			if p.State.Proxy != "" {
 				out["proxy"] = chrome.RedactProxy(p.State.Proxy)
 				out["relay_port"] = p.RelayPort()
@@ -158,7 +170,7 @@ var statusCmd = &cobra.Command{
 		if running {
 			state = "running"
 		}
-		fmt.Fprintf(stdout, "profile %s: %s, port %d\ndir: %s\n", p.Name, state, p.State.Port, p.UserDataDir())
+		fmt.Fprintf(stdout, "profile %s: %s, port %d, %s\ndir: %s\n", p.Name, state, p.State.Port, idleNote(p), p.UserDataDir())
 		cur := "none"
 		if me.Tab != "" {
 			cur = shortTab(me.Tab)
@@ -393,6 +405,7 @@ var closeCmd = &cobra.Command{
 func init() {
 	upCmd.Flags().BoolVar(&upHeadless, "headless", false, "run without a window (remembered until 'oko down')")
 	upCmd.Flags().StringVar(&upProxy, "proxy", "", "upstream proxy for this profile, remembered: http://user:pass@host:port, https://…, socks5://… ('none' to clear)")
+	upCmd.Flags().StringVar(&upIdle, "idle", "", "close the browser after this long without an oko command, remembered (e.g. 30m, 4h; 'off' keeps it open; default 1h)")
 	upCmd.Flags().StringVar(&upLang, "lang", "", "browser language for this profile, remembered (e.g. en-US; 'system' to clear)")
 	openCmd.Flags().BoolVarP(&openNew, "new", "n", false, "open in a new background tab, owned by this session, and make it current")
 	openCmd.Flags().BoolVar(&forceFlag, "force", false, "navigate a tab another session owns")

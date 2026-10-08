@@ -23,7 +23,9 @@ what changed (`+`/`-`/`~`), so the agent rarely needs another snapshot.
 Cross-origin iframes get refs like `f1e3`. `trim` and `revive` handle long
 feeds and crashed tabs; `--human` gives curved mouse paths and wheel scrolling.
 `oko up --proxy http://user:pass@host:port` routes a profile through an
-authenticated proxy (http, https, socks5) via a local relay.
+authenticated proxy (http, https, socks5) via a local relay. A browser
+nobody drives for an hour closes itself (`oko up --idle 4h|off` per profile);
+the next command starts it again with the same logins.
 
 **Point instead of describe.** In the oko window press Alt+P and click
 elements (with an optional note); the agent gets each one as a snapshot ref,
