@@ -273,6 +273,9 @@ func (p *Profile) Launch(ctx context.Context, headless bool) (string, error) {
 		// A debugging port makes navigator.webdriver true, which sites read
 		// as a bot; the window is a person's browser as much as an agent's.
 		"--disable-blink-features=AutomationControlled",
+		// Without it Chrome shows an "unsupported command-line flag" bar
+		// for the line above (chromedriver passes it for the same reason).
+		"--test-type",
 		// Background tabs otherwise freeze timers and rendering, which
 		// stalls screenshots and waits on a tab the agent is not looking at.
 		"--disable-background-timer-throttling",

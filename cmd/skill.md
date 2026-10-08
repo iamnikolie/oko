@@ -245,7 +245,8 @@ oko status | up [--headless] [--lang en-US] [--proxy URL] [--idle 30m|off] | dow
   `oko up --idle 4h` changes the limit per profile, `--idle off` disables it.
   Run `oko down` when done with a profile anyway.
 - `navigator.webdriver` is false: Chrome starts with
-  `--disable-blink-features=AutomationControlled`.
+  `--disable-blink-features=AutomationControlled` (+ `--test-type`, which hides
+  Chrome's "unsupported flag" bar).
 - `--profile <name>` / `$OKO_PROFILE`: separate Chrome, logins and current tab
   (e.g. `work` vs `default`). Profiles can run at the same time.
 - Logins: the window is a normal Chrome. When a site needs a login, open it with
