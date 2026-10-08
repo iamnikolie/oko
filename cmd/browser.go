@@ -283,7 +283,7 @@ func normalizeURL(u string) string {
 
 var openCmd = &cobra.Command{
 	Use:   "open <url>",
-	Short: "Navigate your current tab (or --new tab) and wait for load",
+	Short: "Navigate your current tab (or a --new window) and wait for load",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		url := normalizeURL(args[0])
@@ -407,7 +407,7 @@ func init() {
 	upCmd.Flags().StringVar(&upProxy, "proxy", "", "upstream proxy for this profile, remembered: http://user:pass@host:port, https://…, socks5://… ('none' to clear)")
 	upCmd.Flags().StringVar(&upIdle, "idle", "", "close the browser after this long without an oko command, remembered (e.g. 30m, 4h; 'off' keeps it open; default 1h)")
 	upCmd.Flags().StringVar(&upLang, "lang", "", "browser language for this profile, remembered (e.g. en-US; 'system' to clear)")
-	openCmd.Flags().BoolVarP(&openNew, "new", "n", false, "open in a new background tab, owned by this session, and make it current")
+	openCmd.Flags().BoolVarP(&openNew, "new", "n", false, "open in a new background window, owned by this session, and make it current")
 	openCmd.Flags().BoolVar(&forceFlag, "force", false, "navigate a tab another session owns")
 	closeCmd.Flags().BoolVar(&forceFlag, "force", false, "close a tab another session owns")
 	tabCmd.Flags().BoolVar(&tabFront, "front", false, "also switch the browser window to this tab (raises Chrome)")
