@@ -35,28 +35,53 @@ var (
 	recOut   string
 	recWidth int
 	recFPS   int
+
+	recNativeSelects bool
 )
 
 // cursorJS draws the pointer and click ripples. Pages do not render the
 // system cursor into screencast frames, so without it clicks are invisible.
+// While something sits in the top layer (an open in-page select picker, a
+// modal dialog, a popover) no z-index reaches above it, so the pointer and
+// ripples join the top layer as manual popovers, re-shown to stay last.
 const cursorJS = `(() => {
   if (window.__okoCursor) return;
   window.__okoCursor = true;
+  const base = 'inset:auto;margin:0;padding:0;overflow:visible;position:fixed;';
+  const topOpen = () => {
+    try { return !!document.querySelector('select:open, :modal, :popover-open:not(.__oko_ov)'); } catch (_) { return false; }
+  };
+  const lift = (el) => {
+    if (!el.showPopover || !topOpen()) return;
+    try {
+      if (!el.popover) el.popover = 'manual';
+      if (el.matches(':popover-open')) el.hidePopover();
+      el.showPopover();
+    } catch (_) {}
+  };
   const add = () => {
     const c = document.createElement('div');
     c.id = '__oko_cursor';
-    c.style.cssText = 'position:fixed;left:-50px;top:-50px;width:18px;height:18px;border-radius:50%;' +
+    c.className = '__oko_ov';
+    c.style.cssText = base + 'left:-50px;top:-50px;width:18px;height:18px;border-radius:50%;' +
       'background:rgba(255,80,60,.85);border:2px solid #fff;box-shadow:0 0 6px rgba(0,0,0,.45);' +
       'z-index:2147483647;pointer-events:none;transform:translate(-50%,-50%);transition:transform .08s';
     document.documentElement.appendChild(c);
-    addEventListener('mousemove', (e) => { c.style.left = e.clientX + 'px'; c.style.top = e.clientY + 'px'; }, true);
+    let lifted = 0;
+    addEventListener('mousemove', (e) => {
+      c.style.left = e.clientX + 'px'; c.style.top = e.clientY + 'px';
+      if (Date.now() - lifted > 150) { lifted = Date.now(); lift(c); }
+    }, true);
     addEventListener('mousedown', (e) => {
       c.style.transform = 'translate(-50%,-50%) scale(.7)';
       const r = document.createElement('div');
-      r.style.cssText = 'position:fixed;left:' + e.clientX + 'px;top:' + e.clientY + 'px;width:16px;height:16px;' +
+      r.className = '__oko_ov';
+      r.style.cssText = base + 'left:' + e.clientX + 'px;top:' + e.clientY + 'px;width:16px;height:16px;background:none;' +
         'border-radius:50%;border:3px solid rgba(255,80,60,.9);z-index:2147483647;pointer-events:none;' +
         'transform:translate(-50%,-50%);transition:all .45s ease-out;opacity:1';
       document.documentElement.appendChild(r);
+      lift(r);
+      lift(c);
       requestAnimationFrame(() => { r.style.width = '56px'; r.style.height = '56px'; r.style.opacity = '0'; });
       setTimeout(() => r.remove(), 500);
     }, true);
@@ -120,6 +145,9 @@ func recordStart(s *session) error {
 	_ = os.RemoveAll(dir)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
+	}
+	if recNativeSelects {
+		_ = os.WriteFile(filepath.Join(dir, "native-selects"), nil, 0o600)
 	}
 	self, err := os.Executable()
 	if err != nil {
@@ -214,9 +242,14 @@ var recorderCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		// Pointer overlay: on this page now and on every page it navigates to.
-		_, _ = proto.PageAddScriptToEvaluateOnNewDocument{Source: cursorJS}.Call(p)
-		_, _ = proto.RuntimeEvaluate{Expression: cursorJS}.Call(p)
+		// Pointer overlay and in-page selects: on this page now and on every
+		// page it navigates to.
+		inject := cursorJS
+		if _, err := os.Stat(filepath.Join(dir, "native-selects")); err != nil && !s.prof.State.NativeSelects {
+			inject += ";\n" + selectDocJS
+		}
+		_, _ = proto.PageAddScriptToEvaluateOnNewDocument{Source: inject}.Call(p)
+		_, _ = proto.RuntimeEvaluate{Expression: inject}.Call(p)
 
 		events := s.b.Event()
 		frames := 0
@@ -243,7 +276,7 @@ var recorderCmd = &cobra.Command{
 					frames++
 				case "Page.frameNavigated":
 					// Some pages drop init scripts on bfcache restores; re-inject.
-					_, _ = proto.RuntimeEvaluate{Expression: cursorJS}.Call(p)
+					_, _ = proto.RuntimeEvaluate{Expression: inject}.Call(p)
 				}
 			}
 		}()
@@ -459,5 +492,6 @@ func init() {
 	recordCmd.Flags().StringVarP(&recOut, "out", "o", "", "output file, .gif or .mp4 (default ~/.oko/recordings/<time>.gif)")
 	recordCmd.Flags().IntVar(&recWidth, "width", 960, "output width in pixels")
 	recordCmd.Flags().IntVar(&recFPS, "fps", 12, "output frame rate (ffmpeg)")
+	recordCmd.Flags().BoolVar(&recNativeSelects, "native-selects", false, "keep native <select> popups (not in the video) instead of in-page pickers")
 	rootCmd.AddCommand(recordCmd, recorderCmd)
 }

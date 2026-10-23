@@ -34,6 +34,9 @@ type State struct {
 	Relay int `json:"relay,omitempty"`
 	// Human makes input human-like by default (curved mouse, wheel scroll).
 	Human bool `json:"human,omitempty"`
+	// NativeSelects keeps native <select> popups in recordings and --human
+	// runs instead of switching them to in-page pickers.
+	NativeSelects bool `json:"native_selects,omitempty"`
 	// Mouse is the last pointer position oko produced, per tab.
 	Mouse map[string][2]float64 `json:"mouse,omitempty"`
 	// Recorders maps tab id to the pid of its screencast recorder.

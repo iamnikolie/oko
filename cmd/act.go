@@ -108,6 +108,11 @@ func act(fn func(s *session, p *rod.Page) (string, error)) error {
 		}
 		before, _ := p.Info()
 		tabsBefore, _ := s.tabs()
+		// Recording installs in-page selects itself; --human gets them here,
+		// before the baseline, so the change report does not see the switch.
+		if s.human() && s.inPageSelects(p) {
+			_, _ = proto.RuntimeEvaluate{Expression: selectDocJS}.Call(p)
+		}
 		// Baseline for the change report, and a watcher for messages that
 		// flash and vanish before the action settles.
 		if !actSnap && !noDiff {
@@ -358,6 +363,16 @@ func fill(s *session, p *rod.Page, el *rod.Element, value string) (string, error
 	d := describe(el)
 	switch kind := res.Value.Str(); kind {
 	case "select":
+		note := ""
+		if s.inPageSelects(p) {
+			msg, reason, err := s.pickOption(p, el, value, d)
+			if err != nil || msg != "" {
+				return msg, err
+			}
+			if reason != "" {
+				note = "\nnote: " + reason + "; set the value directly"
+			}
+		}
 		if err := el.Select([]string{value}, true, rod.SelectorTypeText); err != nil {
 			// Not an option label; try it as an option value.
 			r, err2 := el.Eval(`function (v) { const o = Array.from(this.options).find(o => o.value === v); if (!o) return false; this.value = v; this.dispatchEvent(new Event('input', {bubbles: true})); this.dispatchEvent(new Event('change', {bubbles: true})); return true }`, value)
@@ -365,7 +380,7 @@ func fill(s *session, p *rod.Page, el *rod.Element, value string) (string, error
 				return "", fmt.Errorf("no option %q in %s", value, d)
 			}
 		}
-		return fmt.Sprintf("selected %q in %s", value, d), nil
+		return fmt.Sprintf("selected %q in %s", value, d) + note, nil
 	case "check", "aria-check":
 		want, err := parseBool(value)
 		if err != nil {

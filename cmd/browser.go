@@ -20,6 +20,8 @@ var (
 	upLang     string
 	upProxy    string
 	upIdle     string
+
+	upNativeSelects bool
 )
 
 var upCmd = &cobra.Command{
@@ -37,6 +39,11 @@ var upCmd = &cobra.Command{
 			p.State.Human = humanFlag
 			_ = p.Save()
 			fmt.Fprintf(stdout, "profile %s: human-like input %v by default\n", p.Name, humanFlag)
+		}
+		if cmd.Flags().Changed("native-selects") {
+			p.State.NativeSelects = upNativeSelects
+			_ = p.Save()
+			fmt.Fprintf(stdout, "profile %s: native selects %v\n", p.Name, upNativeSelects)
 		}
 		if upLang != "" {
 			p.State.Lang = upLang
@@ -406,6 +413,7 @@ func init() {
 	upCmd.Flags().BoolVar(&upHeadless, "headless", false, "run without a window (remembered until 'oko down')")
 	upCmd.Flags().StringVar(&upProxy, "proxy", "", "upstream proxy for this profile, remembered: http://user:pass@host:port, https://…, socks5://… ('none' to clear)")
 	upCmd.Flags().StringVar(&upIdle, "idle", "", "close the browser after this long without an oko command, remembered (e.g. 30m, 4h; 'off' keeps it open; default 1h)")
+	upCmd.Flags().BoolVar(&upNativeSelects, "native-selects", false, "keep native <select> popups in recordings and --human runs, remembered (--native-selects=false to undo)")
 	upCmd.Flags().StringVar(&upLang, "lang", "", "browser language for this profile, remembered (e.g. en-US; 'system' to clear)")
 	openCmd.Flags().BoolVarP(&openNew, "new", "n", false, "open in a new background window, owned by this session, and make it current")
 	openCmd.Flags().BoolVar(&forceFlag, "force", false, "navigate a tab another session owns")

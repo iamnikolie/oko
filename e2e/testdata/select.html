@@ -1,0 +1,13 @@
+<!doctype html><html><head><title>Select</title></head><body>
+<label for="s">Fruit</label>
+<select id="s"><option value=""></option><option value="a">Apple</option><option value="b">Banana</option><option value="c">Cherry</option><option value="d">Durian</option></select>
+<p id="out"></p>
+<script>
+// What a recording shows: whether the picker was ever open with its options laid out.
+window.wasOpen = false; window.optionShown = false; window.changes = 0;
+setInterval(() => {
+  try { if (s.matches(':open')) { wasOpen = true; if (s.options[3].getBoundingClientRect().height > 0) optionShown = true; } } catch (_) {}
+}, 20);
+s.addEventListener('change', () => { changes++; out.textContent = 'changed ' + changes + ' ' + s.value; });
+</script>
+</body></html>

@@ -106,6 +106,20 @@ are capped at 2 s, the last frame is held 1.5 s. `--width` (960) and `--fps`
 is used (MP4 needs ffmpeg). Use `--human` while recording so the pointer moves
 visibly instead of teleporting.
 
+Selects: Chrome draws a native `<select>` popup outside the page, so it never
+shows in frames. While recording (and under `--human`, so a rehearsal matches the
+take) dropdown selects switch to Chrome's in-page picker (`appearance:
+base-select`, the closed field keeps its width): `click` opens a visible list, and
+`fill <select> <option>` clicks the select, moves the pointer to the option and
+clicks it (`(in-page picker)` in the output; disabled options error). If the
+picker cannot open — Chrome without base-select, page CSS forcing another
+appearance — `fill` sets the value directly and prints a `note:` line.
+`multiple`/`size>1` selects are already in the page and are left alone. Selects
+in open shadow roots get the style when `fill` targets them or when present at
+injection. If the base-select look breaks a layout: `oko record start
+--native-selects` for that recording, or `oko up --native-selects` for the
+profile (`--native-selects=false` undoes it).
+
 ## Human-like input (sites that watch behaviour)
 
 `--human` (or `$OKO_HUMAN=1`, or `oko --profile X up --human` to make it that
