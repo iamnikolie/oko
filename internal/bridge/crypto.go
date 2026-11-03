@@ -23,7 +23,9 @@ import (
 //
 // Every connection: HMAC challenge-response over nonces from both sides with
 // the link key; again the bridge proves first. The extension sends nothing
-// else and runs no command before the bridge's proof checks out.
+// else and runs no command before the bridge's proof checks out. Every frame
+// after the handshake is authenticated with keys derived from the link key
+// and that connection's nonces (channel.go).
 
 const (
 	pairProto      = "oko-pair-v2"

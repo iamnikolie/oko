@@ -20,6 +20,9 @@ const helloTimeout = 10 * time.Second
 type extConn struct {
 	ws     *websocket.Conn
 	sendMu sync.Mutex
+	// ch authenticates every frame once the handshake is done; nil before.
+	// Writes go through sendMu; only the read loop opens frames.
+	ch *channel
 
 	mu      sync.Mutex
 	next    int64
@@ -78,8 +81,12 @@ func (e *extConn) send(v interface{}) error {
 	}
 	e.sendMu.Lock()
 	defer e.sendMu.Unlock()
+	frame := string(b)
+	if e.ch != nil {
+		frame = e.ch.seal(b)
+	}
 	_ = e.ws.SetWriteDeadline(time.Now().Add(30 * time.Second))
-	return websocket.Message.Send(e.ws, string(b))
+	return websocket.Message.Send(e.ws, frame)
 }
 
 func (e *extConn) close() {
@@ -112,12 +119,13 @@ func (s *Server) extHandler() websocket.Server {
 			_ = e.send(map[string]string{"type": "refused", "reason": reason})
 			_ = ws.Close()
 		}
+		var ch *channel
 		var err error
 		switch hello.Type {
 		case "pair":
-			err = s.pairHandshake(e, origin, hello)
+			ch, err = s.pairHandshake(e, origin, hello)
 		case "hello":
-			err = s.helloHandshake(e, origin, hello)
+			ch, err = s.helloHandshake(e, origin, hello)
 		default:
 			err = errors.New("expected hello or pair (an extension from before mutual authentication: reload it and pair again)")
 		}
@@ -126,15 +134,23 @@ func (s *Server) extHandler() websocket.Server {
 			return
 		}
 		_ = ws.SetReadDeadline(time.Time{})
+		e.sendMu.Lock()
+		e.ch = ch
+		e.sendMu.Unlock()
 		s.attachExt(e, hello)
 		defer s.detachExt(e)
 		for {
-			var msg string
-			if err := websocket.Message.Receive(ws, &msg); err != nil {
+			var frame string
+			if err := websocket.Message.Receive(ws, &frame); err != nil {
+				return
+			}
+			body, err := ch.open(frame)
+			if err != nil {
+				logf("extension link closed: %v (something else on the link, or an extension from before frame authentication: reload it)", err)
 				return
 			}
 			var m extMsg
-			if err := json.Unmarshal([]byte(msg), &m); err != nil {
+			if err := json.Unmarshal(body, &m); err != nil {
 				continue
 			}
 			s.fromExt(e, m)
@@ -204,82 +220,91 @@ func (e *extConn) receive(d time.Duration) (extMsg, error) {
 	return m, err
 }
 
-// pairHandshake runs the one-time pairing (see crypto.go).
-func (s *Server) pairHandshake(e *extConn, origin string, hello extMsg) error {
+// pairHandshake runs the one-time pairing (see crypto.go) and returns the
+// session channel.
+func (s *Server) pairHandshake(e *extConn, origin string, hello extMsg) (*channel, error) {
 	if !validNonce(hello.Nonce) {
-		return errors.New("bad pairing request")
+		return nil, errors.New("bad pairing request")
 	}
 	pubExtBytes, err := hex.DecodeString(hello.Pub)
 	if err != nil {
-		return errors.New("bad pairing request")
+		return nil, errors.New("bad pairing request")
 	}
 	pubExt, err := ecdh.P256().NewPublicKey(pubExtBytes)
 	if err != nil {
-		return errors.New("bad pairing request")
+		return nil, errors.New("bad pairing request")
 	}
 	code, err := s.pair.beginPair(origin)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	priv, err := ecdh.P256().GenerateKey(rand.Reader)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	shared, err := priv.ECDH(pubExt)
 	if err != nil {
-		return errors.New("bad pairing request")
+		return nil, errors.New("bad pairing request")
 	}
 	nonce, err := randomHex(16)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	pubBridge := hex.EncodeToString(priv.PublicKey().Bytes())
 	tr := pairTranscript(origin, hello.Pub, pubBridge, hello.Nonce, nonce)
 	ck := codeKey(code, nonce)
 	if err := e.send(map[string]string{"type": "pair-challenge", "pub": pubBridge, "nonce": nonce, "proof": hmacHex(ck, "bridge|"+tr)}); err != nil {
-		return err
+		return nil, err
 	}
 	m, err := e.receive(2 * time.Minute)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if m.Type != "pair-confirm" || !hmacOK(ck, "ext|"+tr, m.Proof) {
-		return errCodeWrong
+		return nil, errCodeWrong
 	}
-	if err := s.pair.completePair(code, hmacSum(shared, "oko-key|"+tr), origin); err != nil {
-		return err
+	key := hmacSum(shared, "oko-key|"+tr)
+	if err := s.pair.completePair(code, key, origin); err != nil {
+		return nil, err
 	}
 	logf("paired with %s", origin)
-	return e.send(map[string]string{"type": "paired"})
+	if err := e.send(map[string]string{"type": "paired"}); err != nil {
+		return nil, err
+	}
+	return newChannel(key, origin, hello.Nonce, nonce, true), nil
 }
 
-// helloHandshake authenticates a returning extension both ways.
-func (s *Server) helloHandshake(e *extConn, origin string, hello extMsg) error {
+// helloHandshake authenticates a returning extension both ways and returns
+// the session channel.
+func (s *Server) helloHandshake(e *extConn, origin string, hello extMsg) (*channel, error) {
 	key, ok := s.pair.key(origin)
 	if !ok {
 		if s.pair.Paired() == "" {
-			return errors.New("not paired: run 'oko ext pair' and enter the code in the popup")
+			return nil, errors.New("not paired: run 'oko ext pair' and enter the code in the popup")
 		}
-		return errors.New("not the paired extension: run 'oko ext pair' and enter the code in the popup")
+		return nil, errors.New("not the paired extension: run 'oko ext pair' and enter the code in the popup")
 	}
 	if !validNonce(hello.Nonce) {
-		return errors.New("bad hello")
+		return nil, errors.New("bad hello")
 	}
 	nonce, err := randomHex(16)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := e.send(map[string]string{"type": "challenge", "nonce": nonce, "proof": hmacHex(key, helloBridgeMsg(origin, hello.Nonce, nonce))}); err != nil {
-		return err
+		return nil, err
 	}
 	m, err := e.receive(helloTimeout)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if m.Type != "auth" || !hmacOK(key, helloExtMsg(origin, hello.Nonce, nonce), m.Proof) {
-		return errors.New("extension could not prove the pairing: run 'oko ext pair' and enter the code in the popup")
+		return nil, errors.New("extension could not prove the pairing: run 'oko ext pair' and enter the code in the popup")
 	}
-	return e.send(map[string]string{"type": "welcome"})
+	if err := e.send(map[string]string{"type": "welcome"}); err != nil {
+		return nil, err
+	}
+	return newChannel(key, origin, hello.Nonce, nonce, true), nil
 }
 
 // extCall sends one request to the extension and waits for its answer.

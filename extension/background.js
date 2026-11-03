@@ -2,13 +2,14 @@
 // the user hands over. It holds one chrome.debugger attachment per handed-over
 // tab and relays CDP for it to the local oko bridge (ws://127.0.0.1:<port>/ext).
 // The bridge must prove it holds the pairing key before the worker sends it
-// anything or runs any of its commands (protocol.js), and only the CDP
-// methods in cdp-policy.json reach a tab.
+// anything or runs any of its commands, every frame after that is
+// authenticated both ways (protocol.js), and only the CDP methods in
+// cdp-policy.json reach a tab.
 import { restricted } from './restricted.js';
 import policy from './cdp-policy.json' with { type: 'json' };
 import {
   hex, unhex, randomHex, validNonce, hmac, hmacHex, same, codeKey,
-  pairTranscript, helloBridgeMsg, helloExtMsg, ecdhKeys, ecdhShared,
+  pairTranscript, helloBridgeMsg, helloExtMsg, ecdhKeys, ecdhShared, channel,
 } from './protocol.js';
 
 const CLIENT_METHODS = new Set(policy.client);
@@ -27,6 +28,8 @@ let loaded = null;
 
 let ws = null; // the socket being set up or in use
 let trustedSock = null; // set once the bridge proved itself on it
+let trustedCh = null; // its frame channel
+let sendChain = Promise.resolve(); // frames go out in counter order
 let link = 'off'; // off | connecting | on | refused | unpaired | untrusted
 let linkError = '';
 let pingTimer = null;
@@ -165,7 +168,12 @@ function pushTabs() {
 }
 
 function send(msg) {
-  if (trustedSock && trustedSock.readyState === WebSocket.OPEN) trustedSock.send(JSON.stringify(msg));
+  const sock = trustedSock;
+  if (!sock || sock.readyState !== WebSocket.OPEN) return;
+  const frame = trustedCh.seal(JSON.stringify(msg));
+  sendChain = sendChain.then(() => frame).then((f) => {
+    if (sock.readyState === WebSocket.OPEN) sock.send(f);
+  }).catch(() => { /* socket gone */ });
 }
 
 async function connect() {
@@ -189,8 +197,9 @@ function distrust(sock, reason) {
   pairWaiter = null;
 }
 
-function trust(sock) {
+function trust(sock, ch) {
   trustedSock = sock;
+  trustedCh = ch;
   link = 'on';
   linkError = '';
   retryMs = 1000;
@@ -213,12 +222,13 @@ async function handshake(sock, st, m) {
         return untrusted('it could not prove the pairing key (another program on the port, or oko was paired again elsewhere)');
       }
       st.proved = true;
+      st.ch = await channel(unhex(key), st.nonce, m.nonce);
       sock.send(JSON.stringify({ type: 'auth', proof: await hmacHex(unhex(key), helloExtMsg(st.nonce, m.nonce)) }));
       return;
     }
     case 'welcome':
       if (st.mode !== 'hello' || !st.proved) return untrusted('it skipped the proof');
-      return trust(sock);
+      return trust(sock, st.ch);
     case 'pair-challenge': {
       if (st.mode !== 'pair' || st.proved || !validNonce(m.nonce) || !/^[0-9a-f]{130}$/.test(m.pub || '')) {
         return untrusted('unexpected pairing answer');
@@ -230,6 +240,7 @@ async function handshake(sock, st, m) {
       }
       const shared = await ecdhShared(st.kp, m.pub);
       st.key = hex(await hmac(shared, 'oko-key|' + tr));
+      st.ch = await channel(unhex(st.key), st.nonce, m.nonce);
       st.proved = true;
       sock.send(JSON.stringify({ type: 'pair-confirm', proof: await hmacHex(ck, 'ext|' + tr) }));
       return;
@@ -238,7 +249,7 @@ async function handshake(sock, st, m) {
       if (st.mode !== 'pair' || !st.proved) return untrusted('it skipped the proof');
       await chrome.storage.local.set({ key: st.key });
       await chrome.storage.local.remove('token');
-      return trust(sock);
+      return trust(sock, st.ch);
     case 'refused':
       if (ws === sock) ws = null;
       link = 'refused';
@@ -272,10 +283,18 @@ function open(port, mode, code = '') {
     queue = queue.then(async () => {
       if (ws !== sock && trustedSock !== sock) return;
       let m;
-      try { m = JSON.parse(ev.data); } catch { return; }
       if (trustedSock !== sock) {
+        try { m = JSON.parse(ev.data); } catch { return; }
         try { await handshake(sock, st, m); } catch (e) { distrust(sock, 'bridge not trusted: ' + (e.message || e)); }
         return;
+      }
+      // A forged, altered, replayed or reordered frame ends the session.
+      try {
+        m = JSON.parse(await st.ch.open(ev.data));
+      } catch (e) {
+        trustedSock = null;
+        clearInterval(pingTimer);
+        return distrust(sock, 'bridge not trusted: ' + (e.message || e));
       }
       if (m.type === 'refused') {
         link = 'refused';
@@ -287,7 +306,10 @@ function open(port, mode, code = '') {
     });
   };
   sock.onclose = () => {
-    if (trustedSock === sock) trustedSock = null;
+    if (trustedSock === sock) {
+      trustedSock = null;
+      clearInterval(pingTimer);
+    }
     // A socket replaced by a newer one (re-pairing) has nothing to say.
     if (ws !== sock) return;
     ws = null;
@@ -480,6 +502,6 @@ chrome.runtime.onStartup.addListener(() => connect());
 chrome.runtime.onInstalled.addListener(() => connect());
 
 // For the e2e harness (a throwaway Chrome evaluates in this worker).
-globalThis.oko = { giveTab, releaseTab, releaseAll, setAllowNew, setPort, pair, state, connect, _op: op };
+globalThis.oko = { giveTab, releaseTab, releaseAll, setAllowNew, setPort, pair, state, connect, _op: op, _channel: channel };
 
 load().then(connect);

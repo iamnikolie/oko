@@ -230,3 +230,154 @@ func TestExtensionReleaseReconnect(t *testing.T) {
 		t.Fatal("CLI unpair left the debugger attached")
 	}
 }
+
+// TestExtensionChannel: the worker's frame channel refuses tampered,
+// replayed, reordered, reflected and forged frames (protocol.js, run in the
+// throwaway Chrome's extension worker).
+func TestExtensionChannel(t *testing.T) {
+	port := freePort(t)
+	t.Setenv("OKO_EXT_PORT", strconv.Itoa(port))
+	h := startExtChrome(t, strings.TrimSpace(oko(t, "ext", "path")))
+	out := h.mustJS(`(async () => {
+		const key = new Uint8Array(32).fill(7), ne = 'a'.repeat(32), nb = 'b'.repeat(32);
+		const pair = async () => [await oko._channel(key, ne, nb, 'bridge'), await oko._channel(key, ne, nb, 'ext')];
+		const refused = async (ex, f) => { try { await ex.open(f); return false; } catch { return true; } };
+		const res = {};
+		{ const [br, ex] = await pair();
+		  res.genuine = (await ex.open(await br.seal('{"id":1}'))) === '{"id":1}' && (await ex.open(await br.seal('{"id":2}'))) === '{"id":2}'; }
+		{ const [br, ex] = await pair(); const f = await br.seal('{"method":"Page.reload"}');
+		  res.tampered = await refused(ex, f.replace('Page.reload', 'Runtime.evaluate')); }
+		{ const [br, ex] = await pair(); const f = await br.seal('{"id":1}'); await ex.open(f);
+		  res.replayed = await refused(ex, f); }
+		{ const [br, ex] = await pair(); await br.seal('{"id":1}');
+		  res.reordered = await refused(ex, await br.seal('{"id":2}')); }
+		{ const [br, ex] = await pair();
+		  res.reflected = await refused(ex, await ex.seal('{"id":1}')); }
+		{ const [br, ex] = await pair();
+		  res.unsealed = await refused(ex, '{"id":99,"op":"releaseAll"}'); }
+		{ const [br, ex] = await pair();
+		  res.forged = await refused(ex, '1 ' + '0'.repeat(64) + ' {"id":99,"op":"releaseAll"}'); }
+		{ const [br, ex] = await pair(); await refused(ex, 'junk');
+		  res.closedAfterBad = await refused(ex, await br.seal('{"id":1}')); }
+		return res;
+	})()`)
+	var res map[string]bool
+	if err := json.Unmarshal([]byte(out), &res); err != nil {
+		t.Fatal(out, err)
+	}
+	for _, k := range []string{"genuine", "tampered", "replayed", "reordered", "reflected", "unsealed", "forged", "closedAfterBad"} {
+		if !res[k] {
+			t.Errorf("%s: %s", k, out)
+		}
+	}
+}
+
+// TestExtensionRelay: a listener on the port the extension dials forwards a
+// genuine handshake to the paired bridge and then injects a command of its
+// own. The extension drops the session and runs nothing.
+func TestExtensionRelay(t *testing.T) {
+	for _, inject := range []string{"unsealed", "forged"} {
+		t.Run(inject, func(t *testing.T) {
+			h, c, tab, port := pairedExtension(t)
+			title := func() string {
+				return h.mustJS(fmt.Sprintf(`(async () => (await chrome.tabs.get(%d)).title)()`, tab))
+			}
+			before := title()
+			op := fmt.Sprintf(`{"id":99,"op":"cdp","tabId":%d,"method":"Runtime.evaluate","params":{"expression":"document.title='relayed'"}}`, tab)
+			frame := op
+			if inject == "forged" {
+				frame = "1 " + strings.Repeat("0", 64) + " " + op
+			}
+			relayed := make(chan struct{}, 1)
+			fromExt := make(chan string, 64)
+			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			mux := http.NewServeMux()
+			mux.Handle("/ext", websocket.Handler(func(ext *websocket.Conn) {
+				defer func() { _ = ext.Close() }()
+				cfg, _ := websocket.NewConfig(fmt.Sprintf("ws://127.0.0.1:%d/ext", port), ext.Request().Header.Get("Origin"))
+				var br *websocket.Conn
+				for i := 0; i < 100 && br == nil; i++ {
+					var derr error
+					if br, derr = websocket.DialConfig(cfg); derr != nil {
+						br = nil
+						time.Sleep(100 * time.Millisecond)
+					}
+				}
+				if br == nil {
+					return
+				}
+				defer func() { _ = br.Close() }()
+				go func() {
+					for {
+						var m string
+						if websocket.Message.Receive(ext, &m) != nil {
+							_ = br.Close()
+							return
+						}
+						fromExt <- m
+						_ = websocket.Message.Send(br, m)
+					}
+				}()
+				for {
+					var m string
+					if websocket.Message.Receive(br, &m) != nil {
+						return
+					}
+					if websocket.Message.Send(ext, m) != nil {
+						return
+					}
+					if strings.Contains(m, `"welcome"`) {
+						_ = websocket.Message.Send(ext, frame)
+						relayed <- struct{}{}
+					}
+				}
+			}))
+			srv := &http.Server{Handler: mux}
+			go func() { _ = srv.Serve(ln) }()
+			defer func() { _ = srv.Close() }()
+
+			// Point the extension at the relay and bring the bridge back
+			// behind it.
+			h.mustJS(fmt.Sprintf("oko.setPort(%d)", ln.Addr().(*net.TCPAddr).Port))
+			if err := c.Stop(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			waitFor(t, func() bool { return !c.Running(context.Background()) })
+			go func() { _ = exec.Command(bin, "-p", "mine", "tabs").Run() }()
+			select {
+			case <-relayed:
+			case <-time.After(20 * time.Second):
+				t.Fatal("the handshake never went through the relay")
+			}
+			var st struct {
+				Link      string `json:"link"`
+				LinkError string `json:"linkError"`
+			}
+			waitFor(t, func() bool {
+				_ = json.Unmarshal([]byte(h.mustJS("oko.state()")), &st)
+				return st.Link == "untrusted"
+			})
+			if !strings.Contains(st.LinkError, "failed authentication") {
+				t.Fatalf("state %+v", st)
+			}
+			time.Sleep(500 * time.Millisecond)
+			if got := title(); got != before || got == "relayed" {
+				t.Fatalf("the injected command ran: title %q", got)
+			}
+			for {
+				select {
+				case m := <-fromExt:
+					if strings.Contains(m, `"id":99`) {
+						t.Fatalf("the extension answered the injected command: %s", m)
+					}
+					continue
+				default:
+				}
+				break
+			}
+		})
+	}
+}

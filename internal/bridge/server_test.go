@@ -51,6 +51,8 @@ func (b *testBridge) url(path string) string { return fmt.Sprintf("127.0.0.1:%d%
 // fakeExt plays the extension: it answers ops from a script and records them.
 type fakeExt struct {
 	ws  *websocket.Conn
+	ch  *channel // the session channel once the handshake is done
+	wmu sync.Mutex
 	mu  sync.Mutex
 	ops []extReq
 	// answer returns the result for an op (nil error → result).
@@ -79,10 +81,34 @@ func dialExt(t *testing.T, b *testBridge, origin string, hello map[string]string
 	return &fakeExt{ws: ws}, reply
 }
 
+// send writes one authenticated frame.
+func (e *fakeExt) send(v interface{}) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	e.wmu.Lock()
+	defer e.wmu.Unlock()
+	return websocket.Message.Send(e.ws, e.ch.seal(b))
+}
+
+// recv reads one authenticated frame.
+func (e *fakeExt) recv(v interface{}) error {
+	var frame string
+	if err := websocket.Message.Receive(e.ws, &frame); err != nil {
+		return err
+	}
+	body, err := e.ch.open(frame)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(body, v)
+}
+
 func (e *fakeExt) serve() {
 	for {
 		var r extReq
-		if err := websocket.JSON.Receive(e.ws, &r); err != nil {
+		if err := e.recv(&r); err != nil {
 			return
 		}
 		e.mu.Lock()
@@ -95,9 +121,9 @@ func (e *fakeExt) serve() {
 			res, errMsg = ans(r)
 		}
 		if errMsg != "" {
-			_ = websocket.JSON.Send(e.ws, map[string]interface{}{"id": r.ID, "error": map[string]interface{}{"code": -32000, "message": errMsg}})
+			_ = e.send(map[string]interface{}{"id": r.ID, "error": map[string]interface{}{"code": -32000, "message": errMsg}})
 		} else {
-			_ = websocket.JSON.Send(e.ws, map[string]interface{}{"id": r.ID, "result": res})
+			_ = e.send(map[string]interface{}{"id": r.ID, "result": res})
 		}
 	}
 }
@@ -116,7 +142,7 @@ func (e *fakeExt) seen(method string) []extReq {
 
 func (e *fakeExt) tabs(t *testing.T, allowNew bool, tabs ...Tab) {
 	t.Helper()
-	if err := websocket.JSON.Send(e.ws, map[string]interface{}{"ev": "tabs", "tabs": tabs, "allowNew": allowNew}); err != nil {
+	if err := e.send(map[string]interface{}{"ev": "tabs", "tabs": tabs, "allowNew": allowNew}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -152,6 +178,7 @@ func extPair(t *testing.T, b *testBridge, origin, code string) ([]byte, *fakeExt
 	if final["type"] != "paired" {
 		return nil, e, final, fmt.Errorf("confirm: %v", final)
 	}
+	e.ch = newChannel(key, origin, nonce, reply["nonce"], false)
 	return key, e, final, nil
 }
 
@@ -170,6 +197,7 @@ func extHello(t *testing.T, b *testBridge, origin string, key []byte) (*fakeExt,
 	if final["type"] != "welcome" {
 		return e, final, fmt.Errorf("auth: %v", final)
 	}
+	e.ch = newChannel(key, origin, nonce, reply["nonce"], false)
 	return e, final, nil
 }
 
@@ -507,7 +535,7 @@ func TestRelay(t *testing.T) {
 	}
 
 	// Events of the tab reach the session.
-	_ = websocket.JSON.Send(e.ws, map[string]interface{}{"ev": "cdp", "tabId": 7, "method": "Page.loadEventFired", "params": map[string]float64{"timestamp": 1}})
+	_ = e.send(map[string]interface{}{"ev": "cdp", "tabId": 7, "method": "Page.loadEventFired", "params": map[string]float64{"timestamp": 1}})
 	if ev := c.next(t, "Page.loadEventFired"); ev.SessionID != sid {
 		t.Fatalf("event %+v", ev)
 	}
@@ -568,7 +596,7 @@ func TestFrameTarget(t *testing.T) {
 		if r.Method == "Target.setAutoAttach" {
 			// Chrome reports the out-of-process frame to the tab session.
 			go func() {
-				_ = websocket.JSON.Send(e.ws, map[string]interface{}{"ev": "cdp", "tabId": 7, "method": "Target.attachedToTarget",
+				_ = e.send(map[string]interface{}{"ev": "cdp", "tabId": 7, "method": "Target.attachedToTarget",
 					"params": map[string]interface{}{"sessionId": "CHILD1", "targetInfo": map[string]string{"targetId": "FRAME1", "type": "iframe"}}})
 			}()
 		}
@@ -590,7 +618,7 @@ func TestFrameTarget(t *testing.T) {
 	if len(ops) != 1 || ops[0].TabID != 7 || ops[0].SessionID != "CHILD1" {
 		t.Fatalf("frame command not routed to the child session: %+v", ops)
 	}
-	_ = websocket.JSON.Send(e.ws, map[string]interface{}{"ev": "cdp", "tabId": 7, "sessionId": "CHILD1", "method": "Runtime.consoleAPICalled", "params": map[string]string{}})
+	_ = e.send(map[string]interface{}{"ev": "cdp", "tabId": 7, "sessionId": "CHILD1", "method": "Runtime.consoleAPICalled", "params": map[string]string{}})
 	if ev := c.next(t, "Runtime.consoleAPICalled"); ev.SessionID != sid {
 		t.Fatalf("frame event under %q, want %q", ev.SessionID, sid)
 	}

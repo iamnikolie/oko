@@ -2,7 +2,8 @@
 // Pairing: ephemeral P-256 ECDH, each side proves the one-time code with an
 // HMAC keyed by PBKDF2(code) over the transcript; the bridge proves first. The
 // link key is HMAC(ECDH secret, transcript) and never crosses the socket.
-// Every connection: HMAC challenge-response with the link key, bridge first.
+// Every connection: HMAC challenge-response with the link key, bridge first,
+// then every frame both ways is authenticated (channel below).
 const enc = new TextEncoder();
 
 export const ORIGIN = chrome.runtime.getURL('').replace(/\/$/, '');
@@ -47,4 +48,42 @@ export async function ecdhKeys() {
 export async function ecdhShared(kp, pubHex) {
   const peer = await crypto.subtle.importKey('raw', unhex(pubHex), { name: 'ECDH', namedCurve: 'P-256' }, false, []);
   return new Uint8Array(await crypto.subtle.deriveBits({ name: 'ECDH', public: peer }, kp.privateKey, 256));
+}
+
+// channel authenticates every frame after the handshake (mirror of
+// internal/bridge/channel.go): one HMAC key per direction from the link key
+// and this connection's nonces; a frame is "<n> <mac> <body>", n counts that
+// direction from 1 with no gaps, mac = HMAC(key, n + "|" + body). open throws
+// on a frame that does not check out or comes out of order; the caller then
+// drops the session. side is 'ext' (the worker) or 'bridge' (tests only).
+export async function channel(linkKey, nonceExt, nonceBridge, side = 'ext') {
+  const dirKey = async (dir) => crypto.subtle.importKey('raw',
+    await hmac(linkKey, ['oko-frames', dir, ORIGIN, nonceExt, nonceBridge].join('|')),
+    { name: 'HMAC', hash: 'SHA-256' }, false, ['sign', 'verify']);
+  const out = await dirKey(side === 'bridge' ? 'bridge' : 'ext');
+  const inn = await dirKey(side === 'bridge' ? 'ext' : 'bridge');
+  let sent = 0;
+  let recvd = 0;
+  let broken = false; // one bad frame ends the channel
+  return {
+    // seal numbers the frame now, so frames must be written in call order.
+    async seal(body) {
+      const n = String(++sent);
+      return `${n} ${hex(await crypto.subtle.sign('HMAC', out, enc.encode(n + '|' + body)))} ${body}`;
+    },
+    async open(frame) {
+      const fail = () => { broken = true; return new Error('a message failed authentication'); };
+      if (broken || typeof frame !== 'string') throw fail();
+      const a = frame.indexOf(' ');
+      const b = a < 0 ? -1 : frame.indexOf(' ', a + 1);
+      if (b < 0) throw fail();
+      const n = frame.slice(0, a);
+      const mac = frame.slice(a + 1, b);
+      const body = frame.slice(b + 1);
+      if (n !== String(recvd + 1) || !/^[0-9a-f]{64}$/.test(mac)) throw fail();
+      recvd++; // claim the number before awaiting
+      if (!await crypto.subtle.verify('HMAC', inn, unhex(mac), enc.encode(n + '|' + body))) throw fail();
+      return body;
+    },
+  };
 }

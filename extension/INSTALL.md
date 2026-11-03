@@ -54,6 +54,10 @@ circular arrow on its card). Extension 0.2 pairs differently from 0.1: run
   one-time code). The key never crosses the socket. Something else listening
   on the port gets only random nonces, and the popup shows "bridge not
   trusted".
+- After that every message, both ways, carries a counter and an HMAC under a
+  key for that connection and direction. A program that relays a genuine
+  handshake cannot add, change, replay or reorder a message: the first one
+  that does not check out ends the connection.
 - Pairing: the code (10 minutes, one use, 5 attempts) is never sent either;
   each side proves it with an HMAC keyed by PBKDF2(code).
 - The bridge listens on `127.0.0.1` only (`$OKO_EXT_PORT`, default 47222) and

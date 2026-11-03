@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -70,12 +71,16 @@ func startExtChrome(t *testing.T, extDir string) *extHarness {
 		"--remote-debugging-pipe", "--enable-unsafe-extension-debugging", "--window-size=1280,900"}, quietChromeFlags...)
 	cmd := exec.Command(bin, append(args, "about:blank")...)
 	cmd.ExtraFiles = []*os.File{toChrome, fromChrome}
+	// Its own process group, so teardown reaches the helper processes too.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
 	_ = toChrome.Close()
 	_ = fromChrome.Close()
-	t.Cleanup(func() { _ = chromeIn.Close(); _ = chromeOut.Close() })
+	// Registered before anything can fail, and after t.TempDir, so it runs
+	// before the profile is removed.
+	t.Cleanup(func() { stopChrome(t, cmd, chromeIn, udd); _ = chromeOut.Close() })
 	if _, err := chromeIn.Write([]byte(fmt.Sprintf(`{"id":1,"method":"Extensions.loadUnpacked","params":{"path":%q}}`, extDir) + "\x00")); err != nil {
 		t.Fatal(err)
 	}
@@ -101,7 +106,6 @@ func startExtChrome(t *testing.T, extDir string) *extHarness {
 		t.Fatal("Extensions.loadUnpacked: no answer")
 	}
 	h := &extHarness{t: t, cmd: cmd}
-	t.Cleanup(func() { _ = cmd.Process.Kill(); _, _ = cmd.Process.Wait() })
 	var ws string
 	for i := 0; i < 100 && ws == ""; i++ {
 		time.Sleep(100 * time.Millisecond)
@@ -152,6 +156,33 @@ func startExtChrome(t *testing.T, extDir string) *extHarness {
 	where, _ := h.js("location.href + ' ' + Object.keys(globalThis).filter(k => !/^on/.test(k)).slice(0,30).join(',')")
 	t.Fatalf("extension worker never came up: %s (%s)", last, where)
 	return h
+}
+
+// stopChrome closes the test Chrome the way a user would (Browser.close over
+// the pipe), waits for it, then kills whatever is left of its process group
+// and empties the profile while no process can write to it any more. A plain
+// kill left helper processes writing into the profile while the test's
+// TempDir cleanup removed it ("directory not empty").
+func stopChrome(t *testing.T, cmd *exec.Cmd, pipe *os.File, udd string) {
+	exited := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(exited) }()
+	_, _ = pipe.Write([]byte(`{"id":999999,"method":"Browser.close"}` + "\x00"))
+	select {
+	case <-exited:
+	case <-time.After(10 * time.Second):
+		_ = cmd.Process.Kill()
+		<-exited
+	}
+	_ = pipe.Close()
+	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+	var err error
+	for i := 0; i < 50; i++ {
+		if err = os.RemoveAll(udd); err == nil {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Errorf("test Chrome profile not removed: %v", err)
 }
 
 // js runs an expression in the extension's worker and returns its JSON value.
