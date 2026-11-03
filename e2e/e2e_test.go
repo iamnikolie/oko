@@ -42,6 +42,9 @@ func TestMain(m *testing.M) {
 	}
 	home = filepath.Join(tmp, "home")
 	os.Setenv("OKO_HOME", home)
+	// A throwaway Chrome must not ask the macOS keychain ("Chrome Safe
+	// Storage") or anything else on the user's screen.
+	os.Setenv("OKO_CHROME_ARGS", strings.Join(quietChromeFlags, " "))
 	os.Setenv("OKO_PROFILE", "default")
 	os.Setenv("OKO_HUMAN", "")
 	os.Setenv("OKO_TAB", "")
@@ -61,6 +64,10 @@ func TestMain(m *testing.M) {
 	_ = os.RemoveAll(tmp)
 	os.Exit(code)
 }
+
+// quietChromeFlags keep every Chrome the tests start off the user's keychain
+// and free of first-run dialogs.
+var quietChromeFlags = []string{"--use-mock-keychain", "--password-store=basic", "--no-first-run", "--no-default-browser-check"}
 
 func serve(host string, h http.Handler) string {
 	ln, err := net.Listen("tcp", host+":0")

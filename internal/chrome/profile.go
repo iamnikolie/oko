@@ -292,6 +292,11 @@ func (p *Profile) Launch(ctx context.Context, headless bool) (string, error) {
 	if headless {
 		args = append(args, "--headless=new", "--window-size=1440,900")
 	}
+	// $OKO_CHROME_ARGS adds flags (space-separated). The e2e suite passes
+	// --use-mock-keychain --password-store=basic so a throwaway Chrome never
+	// asks the macOS keychain; real profiles keep the keychain, which holds
+	// the key their saved logins are encrypted with.
+	args = append(args, strings.Fields(os.Getenv("OKO_CHROME_ARGS"))...)
 	if p.State.Lang != "" {
 		base := strings.SplitN(p.State.Lang, "-", 2)[0]
 		args = append(args, "--lang="+p.State.Lang, "--accept-lang="+p.State.Lang+","+base)

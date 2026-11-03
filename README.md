@@ -83,7 +83,9 @@ mkdir -p ~/.claude/skills/oko && oko skill > ~/.claude/skills/oko/SKILL.md
 mkdir -p ~/.codex/skills/oko && oko skill > ~/.codex/skills/oko/SKILL.md
 ```
 
-macOS and Linux. Needs Google Chrome (or Chromium; set `OKO_CHROME` to the binary). State lives
+macOS and Linux. Needs Google Chrome (or Chromium; set `OKO_CHROME` to the binary;
+`OKO_CHROME_ARGS` adds launch flags — the tests pass `--use-mock-keychain
+--password-store=basic` so their throwaway Chrome never asks the keychain). State lives
 in `~/.oko` (`OKO_HOME` to move it): one Chrome user-data dir per profile,
 screenshots in `~/.oko/shots`.
 

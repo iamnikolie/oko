@@ -21,7 +21,8 @@ import (
 )
 
 // extChrome is the browser for the extension test: $OKO_EXT_CHROME, else the
-// Chrome oko uses. The extension goes in through CDP Extensions.loadUnpacked
+// Chrome oko uses. It always runs headless on a throwaway user-data dir with
+// quietChromeFlags, never on the user's profile. The extension goes in through CDP Extensions.loadUnpacked
 // (branded Chrome ignores --load-extension since 137).
 func extChrome() string {
 	if v := os.Getenv("OKO_EXT_CHROME"); v != "" {
@@ -65,9 +66,9 @@ func startExtChrome(t *testing.T, extDir string) *extHarness {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command(bin, "--user-data-dir="+udd, "--headless=new", "--remote-debugging-port=0",
-		"--remote-debugging-pipe", "--enable-unsafe-extension-debugging",
-		"--no-first-run", "--no-default-browser-check", "--window-size=1280,900", "about:blank")
+	args := append([]string{"--user-data-dir=" + udd, "--headless=new", "--remote-debugging-port=0",
+		"--remote-debugging-pipe", "--enable-unsafe-extension-debugging", "--window-size=1280,900"}, quietChromeFlags...)
+	cmd := exec.Command(bin, append(args, "about:blank")...)
 	cmd.ExtraFiles = []*os.File{toChrome, fromChrome}
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
