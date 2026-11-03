@@ -340,14 +340,8 @@ func (s *Server) sessionCall(c *cdpClient, req cdpReq) (json.RawMessage, error) 
 	default:
 		return nil, &cdpError{Code: -32001, Message: "Session with given id not found."}
 	}
-	if req.Method == "Page.navigate" {
-		var p struct {
-			URL string `json:"url"`
-		}
-		_ = json.Unmarshal(req.Params, &p)
-		if why := restrictedURL(p.URL); why != "" {
-			return nil, &cdpError{Code: -32000, Message: why}
-		}
+	if why := clientAllowed(req.Method, req.Params); why != "" {
+		return nil, &cdpError{Code: -32601, Message: why}
 	}
 	ctx, cancel := context.WithTimeout(c.ctx, extCallTimeout)
 	defer cancel()
@@ -363,7 +357,6 @@ func (s *Server) sessionCall(c *cdpClient, req cdpReq) (json.RawMessage, error) 
 func (s *Server) recordUndo(vs *vsession, method string, params, result json.RawMessage) {
 	var p map[string]interface{}
 	_ = json.Unmarshal(params, &p)
-	on := func(key string) bool { v, ok := p[key].(bool); return ok && v }
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	u := vs.undo
@@ -379,58 +372,21 @@ func (s *Server) recordUndo(vs *vsession, method string, params, result json.Raw
 		if id, _ := p["identifier"].(string); id != "" {
 			delete(u, "script:"+id)
 		}
-	case "Runtime.addBinding":
-		if name, _ := p["name"].(string); name != "" {
-			u["binding:"+name] = undoCall{"Runtime.removeBinding", map[string]string{"name": name}}
-		}
-	case "Runtime.removeBinding":
-		if name, _ := p["name"].(string); name != "" {
-			delete(u, "binding:"+name)
-		}
-	case "Fetch.enable":
-		u["fetch"] = undoCall{"Fetch.disable", nil}
-	case "Fetch.disable":
-		delete(u, "fetch")
 	case "Emulation.setDeviceMetricsOverride":
 		u["metrics"] = undoCall{"Emulation.clearDeviceMetricsOverride", nil}
 	case "Emulation.clearDeviceMetricsOverride":
 		delete(u, "metrics")
-	case "Emulation.setTouchEmulationEnabled":
-		setOrClear(u, "touch", on("enabled"), undoCall{method, map[string]bool{"enabled": false}})
-	case "Emulation.setEmulatedMedia":
-		u["media"] = undoCall{method, map[string]interface{}{"media": "", "features": []interface{}{}}}
-	case "Emulation.setFocusEmulationEnabled":
-		setOrClear(u, "focus", on("enabled"), undoCall{method, map[string]bool{"enabled": false}})
-	case "Page.setInterceptFileChooserDialog":
-		setOrClear(u, "chooser", on("enabled"), undoCall{method, map[string]bool{"enabled": false}})
-	case "Input.setInterceptDrags":
-		setOrClear(u, "drags", on("enabled"), undoCall{method, map[string]bool{"enabled": false}})
-	case "Page.setBypassCSP":
-		setOrClear(u, "csp", on("enabled"), undoCall{method, map[string]bool{"enabled": false}})
-	case "Network.setExtraHTTPHeaders":
-		u["headers"] = undoCall{method, map[string]interface{}{"headers": map[string]string{}}}
-	case "Network.setBlockedURLs":
-		u["blocked"] = undoCall{method, map[string]interface{}{"urls": []string{}}}
-	case "Overlay.setInspectMode":
-		u["inspect"] = undoCall{method, map[string]interface{}{"mode": "none", "highlightConfig": map[string]interface{}{}}}
-	case "Debugger.enable":
-		u["debugger"] = undoCall{"Debugger.disable", nil}
-	}
-}
-
-func setOrClear(u map[string]undoCall, key string, set bool, c undoCall) {
-	if set {
-		u[key] = c
-	} else {
-		delete(u, key)
+	case "Page.startScreencast":
+		u["screencast"] = undoCall{"Page.stopScreencast", nil}
+	case "Page.stopScreencast":
+		delete(u, "screencast")
 	}
 }
 
 // idleDisables are sent when the last session on a tab ends, so the next oko
 // command starts from a clean attachment, as it would on a fresh CDP session.
-var idleDisables = []string{"Fetch.disable", "Debugger.disable", "Network.disable", "Log.disable",
-	"CSS.disable", "DOM.disable", "Overlay.disable", "Animation.disable", "Performance.disable",
-	"Runtime.disable", "Page.disable"}
+var idleDisables = []string{"Network.disable", "Log.disable", "DOMSnapshot.disable", "DOM.disable",
+	"Performance.disable", "Runtime.disable", "Page.disable"}
 
 // endSession undoes what the session left on the tab.
 func (s *Server) endSession(vs *vsession) {

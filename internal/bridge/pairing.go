@@ -2,8 +2,6 @@ package bridge
 
 import (
 	"crypto/rand"
-	"crypto/sha256"
-	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -17,7 +15,7 @@ import (
 const (
 	// codeTTL is how long a pairing code printed by 'oko ext pair' works.
 	codeTTL = 10 * time.Minute
-	// codeAttempts wrong guesses burn the code.
+	// codeAttempts pairing handshakes burn the code, whatever their outcome.
 	codeAttempts = 5
 	// codeAlphabet has no 0/O, 1/I/L: the code is read off a terminal.
 	codeAlphabet = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
@@ -31,13 +29,13 @@ var (
 	errNoCode      = errors.New("no pairing code is open; run 'oko ext pair' and use the code it prints")
 	errCodeExpired = errors.New("pairing code expired; run 'oko ext pair' again")
 	errCodeWrong   = errors.New("wrong pairing code")
-	errCodeBurned  = errors.New("too many wrong codes; run 'oko ext pair' again")
+	errCodeBurned  = errors.New("too many pairing attempts; run 'oko ext pair' again")
 	errBadOrigin   = errors.New("pairing is only accepted from a Chrome extension")
 )
 
-// Pairing holds the one-time code and the paired extension: the hash of its
-// token and its origin. Only the hash is stored; the token lives in the
-// extension's storage.
+// Pairing holds the one-time code and the paired extension: its origin and
+// the link key both sides derived during pairing. The key sits in a 0600 file
+// and in the extension's storage; it never crosses the socket.
 type Pairing struct {
 	path string
 	now  func() time.Time
@@ -50,16 +48,20 @@ type Pairing struct {
 }
 
 type pairedFile struct {
-	TokenSHA256 string    `json:"token_sha256"`
-	Origin      string    `json:"origin"`
-	PairedAt    time.Time `json:"paired_at"`
+	Key      string    `json:"key"`
+	Origin   string    `json:"origin"`
+	PairedAt time.Time `json:"paired_at"`
 }
 
-// LoadPairing reads the pairing state from path (missing means unpaired).
+// LoadPairing reads the pairing state from path (missing means unpaired; a
+// pairing from before mutual authentication counts as unpaired).
 func LoadPairing(path string) *Pairing {
 	p := &Pairing{path: path, now: time.Now}
 	if b, err := os.ReadFile(path); err == nil {
 		_ = json.Unmarshal(b, &p.saved)
+	}
+	if k, err := hex.DecodeString(p.saved.Key); err != nil || len(k) != 32 {
+		p.saved = pairedFile{}
 	}
 	return p
 }
@@ -92,10 +94,9 @@ func normCode(s string) string {
 	}, s)
 }
 
-// Pair checks the code from an extension at origin and, when it matches,
-// stores a new token for that extension (replacing any earlier pairing) and
-// returns it. The code works once.
-func (p *Pairing) Pair(code, origin string) (string, error) {
+// beginPair spends one attempt of the open code for an extension at origin
+// and returns the code to key the handshake with.
+func (p *Pairing) beginPair(origin string) (string, error) {
 	if !extOriginRe.MatchString(origin) {
 		return "", errBadOrigin
 	}
@@ -108,50 +109,51 @@ func (p *Pairing) Pair(code, origin string) (string, error) {
 		p.code = ""
 		return "", errCodeExpired
 	}
-	if subtle.ConstantTimeCompare([]byte(normCode(code)), []byte(p.code)) != 1 {
-		p.attempts++
-		if p.attempts >= codeAttempts {
-			p.code = ""
-			return "", errCodeBurned
-		}
-		return "", errCodeWrong
+	if p.attempts >= codeAttempts {
+		p.code = ""
+		return "", errCodeBurned
+	}
+	p.attempts++
+	return p.code, nil
+}
+
+// completePair stores the link key for origin; the code is used up.
+func (p *Pairing) completePair(code string, key []byte, origin string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.code != code {
+		return errNoCode
 	}
 	p.code = ""
-	token, err := randomHex(32)
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256([]byte(token))
-	saved := pairedFile{TokenSHA256: hex.EncodeToString(sum[:]), Origin: origin, PairedAt: p.now().UTC()}
+	saved := pairedFile{Key: hex.EncodeToString(key), Origin: origin, PairedAt: p.now().UTC()}
 	b, _ := json.MarshalIndent(saved, "", "  ")
 	tmp := p.path + ".tmp"
 	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return "", err
+		return err
 	}
 	if err := os.Rename(tmp, p.path); err != nil {
-		return "", err
+		return err
 	}
 	p.saved = saved
-	return token, nil
+	return nil
 }
 
-// Verify reports whether token is the paired extension's and origin is its
-// origin.
-func (p *Pairing) Verify(token, origin string) bool {
+// key returns the link key when origin is the paired extension's.
+func (p *Pairing) key(origin string) ([]byte, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.saved.TokenSHA256 == "" || token == "" || origin != p.saved.Origin {
-		return false
+	if p.saved.Key == "" || origin != p.saved.Origin {
+		return nil, false
 	}
-	sum := sha256.Sum256([]byte(token))
-	return subtle.ConstantTimeCompare([]byte(hex.EncodeToString(sum[:])), []byte(p.saved.TokenSHA256)) == 1
+	k, err := hex.DecodeString(p.saved.Key)
+	return k, err == nil
 }
 
 // Paired returns the paired extension's origin, or "".
 func (p *Pairing) Paired() string {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.saved.TokenSHA256 == "" {
+	if p.saved.Key == "" {
 		return ""
 	}
 	return p.saved.Origin
@@ -164,7 +166,7 @@ func (p *Pairing) CodeOpen() bool {
 	return p.code != "" && !p.now().After(p.codeExp)
 }
 
-// Unpair forgets the paired extension; its token stops working.
+// Unpair forgets the paired extension; its key stops working.
 func (p *Pairing) Unpair() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()

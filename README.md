@@ -44,8 +44,9 @@ port. The oko extension (MV3, in [`extension/`](extension/), embedded in the
 binary) closes that gap: you hand a tab over in its popup, and `oko -p mine …`
 drives that tab through a bridge on 127.0.0.1 — the same commands, your logins.
 oko only ever sees tabs you handed over; opening its own tabs is an opt-in.
-Pairing is a one-time code (`oko ext pair`); the bridge refuses unknown
-extensions, browser origins and callers without the local secret. Setup and
+Pairing is a one-time code (`oko ext pair`); after that the extension, the
+bridge and oko commands authenticate each other on every connection without
+sending a secret, and only page-level CDP methods reach a tab. Setup and
 rollback: [extension/INSTALL.md](extension/INSTALL.md).
 
 ## Tests

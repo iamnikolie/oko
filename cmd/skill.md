@@ -299,7 +299,11 @@ oko ext release          # give every tab back;  oko ext unpair / oko ext stop
 - `open --new`, `revive` and other new-tab paths need the popup's opt-in
   "Allow oko to open its own tabs"; such tabs go into an orange "oko" group.
 - Refused on an extension profile, with a reason: `window`, `viewport`, the
-  element picker (`pick`, `picks`, `watch`), `up --headless/--proxy/--lang/--idle`.
+  element picker (`pick`, `picks`, `watch`), `perf trace|heap|lighthouse`,
+  `up --headless/--proxy/--lang/--idle`. Only page-level CDP reaches the tab:
+  no cookies, storage or other tabs; `open` takes http(s) and about:blank.
+- "bridge not trusted" in the popup: something on the port could not prove
+  the pairing; stop it (or move the port) and reload the extension.
   `down` releases every tab and stops the bridge; it never closes the user's Chrome.
 - Chrome's own pages (chrome://, the Web Store, other extensions) cannot be
   handed over or navigated to. Chrome shows a "started debugging this browser"

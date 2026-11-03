@@ -6,5 +6,5 @@ import "embed"
 
 // Files is the unpacked extension.
 //
-//go:embed manifest.json background.js restricted.js popup.html popup.css popup.js
+//go:embed manifest.json background.js restricted.js protocol.js popup.html popup.css popup.js cdp-policy.json
 var Files embed.FS

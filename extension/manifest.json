@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "oko",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Lets the oko CLI drive the tabs you hand over, through a bridge on 127.0.0.1. Local only.",
   "minimum_chrome_version": "125",
   "permissions": ["debugger", "tabs", "storage", "alarms", "tabGroups"],

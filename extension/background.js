@@ -1,8 +1,18 @@
 // oko extension service worker: the bridge between the oko CLI and the tabs
 // the user hands over. It holds one chrome.debugger attachment per handed-over
-// tab and relays CDP for it to the local oko bridge (ws://127.0.0.1:<port>/ext),
-// authenticated with the token from the one-time pairing.
+// tab and relays CDP for it to the local oko bridge (ws://127.0.0.1:<port>/ext).
+// The bridge must prove it holds the pairing key before the worker sends it
+// anything or runs any of its commands (protocol.js), and only the CDP
+// methods in cdp-policy.json reach a tab.
 import { restricted } from './restricted.js';
+import policy from './cdp-policy.json' with { type: 'json' };
+import {
+  hex, unhex, randomHex, validNonce, hmac, hmacHex, same, codeKey,
+  pairTranscript, helloBridgeMsg, helloExtMsg, ecdhKeys, ecdhShared,
+} from './protocol.js';
+
+const CLIENT_METHODS = new Set(policy.client);
+const BRIDGE_METHODS = new Set(policy.bridge);
 
 const DEFAULT_PORT = 47222;
 const PROTOCOL = '1.3';
@@ -12,10 +22,12 @@ const BADGE = '#c2410c';
 // knows which attachments are its own; cleared when Chrome restarts.
 const controlled = new Map();
 const lastRelease = new Map(); // tabId -> reason, shown in the popup
+const children = new Map(); // tabId -> Set of child session ids (frames)
 let loaded = null;
 
-let ws = null;
-let link = 'off'; // off | connecting | on | refused | unpaired
+let ws = null; // the socket being set up or in use
+let trustedSock = null; // set once the bridge proved itself on it
+let link = 'off'; // off | connecting | on | refused | unpaired | untrusted
 let linkError = '';
 let pingTimer = null;
 let pairWaiter = null;
@@ -28,7 +40,7 @@ const info = () => ({
 });
 
 async function settings() {
-  return chrome.storage.local.get({ token: '', port: DEFAULT_PORT, allowNew: false });
+  return chrome.storage.local.get({ key: '', port: DEFAULT_PORT, allowNew: false });
 }
 
 async function load() {
@@ -101,6 +113,7 @@ export async function releaseTab(tabId, reason = 'released in the popup') {
   await load();
   if (!controlled.has(tabId)) return;
   controlled.delete(tabId);
+  children.delete(tabId);
   lastRelease.set(tabId, reason);
   await save();
   try { await chrome.debugger.detach({ tabId }); } catch { /* already gone */ }
@@ -152,67 +165,142 @@ function pushTabs() {
 }
 
 function send(msg) {
-  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+  if (trustedSock && trustedSock.readyState === WebSocket.OPEN) trustedSock.send(JSON.stringify(msg));
 }
 
 async function connect() {
   if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return;
-  const { token, port } = await settings();
-  if (!token) {
+  const { key, port } = await settings();
+  if (!key) {
     link = 'unpaired';
     return;
   }
-  open(port, { type: 'hello', token, ...info() });
+  open(port, 'hello');
 }
 
-function open(port, first) {
-  link = 'connecting';
-  const sock = new WebSocket(`ws://127.0.0.1:${port}/ext`);
-  ws = sock;
-  sock.onopen = () => sock.send(JSON.stringify(first));
-  sock.onmessage = async (ev) => {
-    let m;
-    try { m = JSON.parse(ev.data); } catch { return; }
-    if (m.type === 'welcome' || m.type === 'paired') {
-      if (m.type === 'paired') await chrome.storage.local.set({ token: m.token });
-      link = 'on';
-      linkError = '';
-      retryMs = 1000;
-      clearInterval(pingTimer);
-      // Websocket traffic keeps the service worker alive.
-      pingTimer = setInterval(() => send({ type: 'ping' }), 20000);
-      pushTabs();
-      pairWaiter?.resolve();
-      pairWaiter = null;
+// distrust drops a socket whose peer failed to prove itself; nothing was sent
+// to it but nonces and public keys.
+function distrust(sock, reason) {
+  if (ws === sock) ws = null;
+  link = 'untrusted';
+  linkError = reason;
+  try { sock.close(); } catch { /* */ }
+  pairWaiter?.reject(new Error(reason));
+  pairWaiter = null;
+}
+
+function trust(sock) {
+  trustedSock = sock;
+  link = 'on';
+  linkError = '';
+  retryMs = 1000;
+  clearInterval(pingTimer);
+  // Websocket traffic keeps the service worker alive.
+  pingTimer = setInterval(() => send({ type: 'ping' }), 20000);
+  pushTabs();
+  pairWaiter?.resolve();
+  pairWaiter = null;
+}
+
+// handshake handles one message before the bridge is trusted.
+async function handshake(sock, st, m) {
+  const untrusted = (why) => distrust(sock, 'bridge not trusted: ' + why);
+  switch (m.type) {
+    case 'challenge': {
+      if (st.mode !== 'hello' || st.proved || !validNonce(m.nonce)) return untrusted('unexpected challenge');
+      const { key } = await settings();
+      if (!same(await hmacHex(unhex(key), helloBridgeMsg(st.nonce, m.nonce)), m.proof)) {
+        return untrusted('it could not prove the pairing key (another program on the port, or oko was paired again elsewhere)');
+      }
+      st.proved = true;
+      sock.send(JSON.stringify({ type: 'auth', proof: await hmacHex(unhex(key), helloExtMsg(st.nonce, m.nonce)) }));
       return;
     }
-    if (m.type === 'refused') {
-      if (ws !== sock) return;
+    case 'welcome':
+      if (st.mode !== 'hello' || !st.proved) return untrusted('it skipped the proof');
+      return trust(sock);
+    case 'pair-challenge': {
+      if (st.mode !== 'pair' || st.proved || !validNonce(m.nonce) || !/^[0-9a-f]{130}$/.test(m.pub || '')) {
+        return untrusted('unexpected pairing answer');
+      }
+      const tr = pairTranscript(st.pub, m.pub, st.nonce, m.nonce);
+      const ck = await codeKey(st.code, m.nonce);
+      if (!same(await hmacHex(ck, 'bridge|' + tr), m.proof)) {
+        return untrusted('it did not prove the pairing code (check the code; is \'oko ext pair\' the one on this port?)');
+      }
+      const shared = await ecdhShared(st.kp, m.pub);
+      st.key = hex(await hmac(shared, 'oko-key|' + tr));
+      st.proved = true;
+      sock.send(JSON.stringify({ type: 'pair-confirm', proof: await hmacHex(ck, 'ext|' + tr) }));
+      return;
+    }
+    case 'paired':
+      if (st.mode !== 'pair' || !st.proved) return untrusted('it skipped the proof');
+      await chrome.storage.local.set({ key: st.key });
+      await chrome.storage.local.remove('token');
+      return trust(sock);
+    case 'refused':
+      if (ws === sock) ws = null;
       link = 'refused';
       linkError = m.reason || 'refused';
-      if (ws === sock) ws = null;
       try { sock.close(); } catch { /* */ }
       pairWaiter?.reject(new Error(linkError));
       pairWaiter = null;
       return;
+  }
+  return untrusted('unexpected message before authentication');
+}
+
+function open(port, mode, code = '') {
+  link = 'connecting';
+  const sock = new WebSocket(`ws://127.0.0.1:${port}/ext`);
+  ws = sock;
+  const st = { mode, code, nonce: randomHex(16), proved: false };
+  let queue = Promise.resolve();
+  sock.onopen = async () => {
+    if (mode === 'pair') {
+      const { kp, pub } = await ecdhKeys();
+      st.kp = kp;
+      st.pub = pub;
+      sock.send(JSON.stringify({ type: 'pair', pub, nonce: st.nonce, ...info() }));
+    } else {
+      sock.send(JSON.stringify({ type: 'hello', nonce: st.nonce, ...info() }));
     }
-    if (m.op) reply(m);
+  };
+  sock.onmessage = (ev) => {
+    // Handle messages one at a time, in order.
+    queue = queue.then(async () => {
+      if (ws !== sock && trustedSock !== sock) return;
+      let m;
+      try { m = JSON.parse(ev.data); } catch { return; }
+      if (trustedSock !== sock) {
+        try { await handshake(sock, st, m); } catch (e) { distrust(sock, 'bridge not trusted: ' + (e.message || e)); }
+        return;
+      }
+      if (m.type === 'refused') {
+        link = 'refused';
+        linkError = m.reason || 'refused';
+        try { sock.close(); } catch { /* */ }
+        return;
+      }
+      if (m.op) reply(m);
+    });
   };
   sock.onclose = () => {
+    if (trustedSock === sock) trustedSock = null;
     // A socket replaced by a newer one (re-pairing) has nothing to say.
     if (ws !== sock) return;
     ws = null;
     clearInterval(pingTimer);
-    if (link !== 'refused') {
-      link = 'off';
-      // While a tab is held the worker stays alive: come back quickly when
-      // the bridge restarts. Otherwise the 30 s alarm reconnects.
-      if (!pairWaiter && controlled.size > 0) {
-        setTimeout(connect, retryMs);
-        retryMs = Math.min(retryMs * 2, 5000);
-      }
-      if (pairWaiter) pairWaiter.reject(new Error(`no oko bridge on 127.0.0.1:${port}: run 'oko ext pair' first`));
-      pairWaiter = null;
+    if (link === 'refused' || link === 'untrusted') return;
+    link = 'off';
+    if (pairWaiter) pairWaiter.reject(new Error(`no oko bridge on 127.0.0.1:${port}: run 'oko ext pair' first`));
+    pairWaiter = null;
+    // While a tab is held the worker stays alive: come back quickly when
+    // the bridge restarts. Otherwise the 30 s alarm reconnects.
+    if (controlled.size > 0) {
+      setTimeout(connect, retryMs);
+      retryMs = Math.min(retryMs * 2, 5000);
     }
   };
 }
@@ -221,8 +309,9 @@ export async function pair(code, port) {
   if (port) await setPort(port);
   const s = await settings();
   if (ws) { try { ws.close(); } catch { /* */ } ws = null; }
+  if (trustedSock) { try { trustedSock.close(); } catch { /* */ } trustedSock = null; }
   const done = new Promise((resolve, reject) => { pairWaiter = { resolve, reject }; });
-  open(s.port, { type: 'pair', code, ...info() });
+  open(s.port, 'pair', code);
   return done;
 }
 
@@ -243,6 +332,28 @@ async function reply(m) {
   }
 }
 
+// denied explains why the bridge may not run method on a tab, or returns ''.
+// The bridge applies the same policy; this is the extension's own check.
+function denied(tabId, sessionId, method, params) {
+  if (sessionId && !children.get(tabId)?.has(sessionId)) return 'not a frame of this tab';
+  if (BRIDGE_METHODS.has(method)) {
+    if (method === 'Target.setAutoAttach') {
+      const keys = Object.keys(params).sort().join(',');
+      if (keys !== 'autoAttach,flatten,waitForDebuggerOnStart' || params.autoAttach !== true || params.flatten !== true || params.waitForDebuggerOnStart !== false) {
+        return 'Target.setAutoAttach: only plain frame auto-attach';
+      }
+    }
+    return '';
+  }
+  if (!CLIENT_METHODS.has(method)) return method + ': not allowed through the oko extension';
+  if (method === 'Page.navigate') {
+    const url = String(params.url || '');
+    if (restricted(url)) return restricted(url);
+    if (url !== 'about:blank' && !/^https?:\/\//i.test(url)) return 'only http(s) and about:blank can be opened through the extension';
+  }
+  return '';
+}
+
 async function op(m) {
   await load();
   const mine = (tabId) => {
@@ -251,6 +362,8 @@ async function op(m) {
   switch (m.op) {
     case 'cdp': {
       mine(m.tabId);
+      const why = denied(m.tabId, m.sessionId, m.method, m.params || {});
+      if (why) throw new Error(why);
       const target = m.sessionId ? { tabId: m.tabId, sessionId: m.sessionId } : { tabId: m.tabId };
       return chrome.debugger.sendCommand(target, m.method, m.params || {});
     }
@@ -296,7 +409,7 @@ export async function state() {
   await load();
   const s = await settings();
   return {
-    link, linkError, paired: !!s.token, port: s.port, allowNew: s.allowNew,
+    link, linkError, paired: !!s.key, port: s.port, allowNew: s.allowNew,
     tabs: await tabList(),
     released: Object.fromEntries(lastRelease),
   };
@@ -304,6 +417,13 @@ export async function state() {
 
 chrome.debugger.onEvent.addListener((source, method, params) => {
   if (source.tabId === undefined || !controlled.has(source.tabId)) return;
+  if (!source.sessionId && method === 'Target.attachedToTarget' && params?.sessionId) {
+    if (!children.has(source.tabId)) children.set(source.tabId, new Set());
+    children.get(source.tabId).add(params.sessionId);
+  }
+  if (!source.sessionId && method === 'Target.detachedFromTarget' && params?.sessionId) {
+    children.get(source.tabId)?.delete(params.sessionId);
+  }
   send({ ev: 'cdp', tabId: source.tabId, sessionId: source.sessionId || '', method, params: params || {} });
 });
 
@@ -311,6 +431,7 @@ chrome.debugger.onDetach.addListener((source, reason) => {
   const tabId = source.tabId;
   if (tabId === undefined || !controlled.has(tabId)) return;
   controlled.delete(tabId);
+  children.delete(tabId);
   lastRelease.set(tabId, reason === 'canceled_by_user' ? 'debugging cancelled in Chrome’s bar' : reason);
   save();
   unbadge(tabId);
@@ -320,6 +441,7 @@ chrome.debugger.onDetach.addListener((source, reason) => {
 chrome.tabs.onRemoved.addListener((tabId) => {
   if (!controlled.has(tabId)) return;
   controlled.delete(tabId);
+  children.delete(tabId);
   save();
   pushTabs();
 });
@@ -358,6 +480,6 @@ chrome.runtime.onStartup.addListener(() => connect());
 chrome.runtime.onInstalled.addListener(() => connect());
 
 // For the e2e harness (a throwaway Chrome evaluates in this worker).
-globalThis.oko = { giveTab, releaseTab, releaseAll, setAllowNew, setPort, pair, state, connect };
+globalThis.oko = { giveTab, releaseTab, releaseAll, setAllowNew, setPort, pair, state, connect, _op: op };
 
 load().then(connect);

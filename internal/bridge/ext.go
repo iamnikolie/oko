@@ -2,6 +2,9 @@ package bridge
 
 import (
 	"context"
+	"crypto/ecdh"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"sync"
@@ -48,8 +51,9 @@ type extError struct {
 // (ev).
 type extMsg struct {
 	Type      string `json:"type,omitempty"`
-	Token     string `json:"token,omitempty"`
-	Code      string `json:"code,omitempty"`
+	Pub       string `json:"pub,omitempty"`
+	Nonce     string `json:"nonce,omitempty"`
+	Proof     string `json:"proof,omitempty"`
 	Version   string `json:"version,omitempty"`
 	Product   string `json:"product,omitempty"`
 	UserAgent string `json:"userAgent,omitempty"`
@@ -108,31 +112,17 @@ func (s *Server) extHandler() websocket.Server {
 			_ = e.send(map[string]string{"type": "refused", "reason": reason})
 			_ = ws.Close()
 		}
+		var err error
 		switch hello.Type {
 		case "pair":
-			token, err := s.pair.Pair(hello.Code, origin)
-			if err != nil {
-				refuse(err.Error())
-				return
-			}
-			logf("paired with %s", origin)
-			if err := e.send(map[string]string{"type": "paired", "token": token}); err != nil {
-				return
-			}
+			err = s.pairHandshake(e, origin, hello)
 		case "hello":
-			if !s.pair.Verify(hello.Token, origin) {
-				if s.pair.Paired() == "" {
-					refuse("not paired: run 'oko ext pair' and enter the code in the popup")
-				} else {
-					refuse("unknown extension or stale token: run 'oko ext pair' and enter the code in the popup")
-				}
-				return
-			}
-			if err := e.send(map[string]string{"type": "welcome"}); err != nil {
-				return
-			}
+			err = s.helloHandshake(e, origin, hello)
 		default:
-			refuse("expected hello or pair")
+			err = errors.New("expected hello or pair (an extension from before mutual authentication: reload it and pair again)")
+		}
+		if err != nil {
+			refuse(err.Error())
 			return
 		}
 		_ = ws.SetReadDeadline(time.Time{})
@@ -200,6 +190,96 @@ func (s *Server) fromExt(e *extConn, m extMsg) {
 	case m.Ev == "cdp":
 		s.routeEvent(m.TabID, m.SessionID, m.Method, m.Params)
 	}
+}
+
+// receive reads one message of the handshake.
+func (e *extConn) receive(d time.Duration) (extMsg, error) {
+	_ = e.ws.SetReadDeadline(time.Now().Add(d))
+	var raw string
+	if err := websocket.Message.Receive(e.ws, &raw); err != nil {
+		return extMsg{}, errors.New("handshake: no answer")
+	}
+	var m extMsg
+	err := json.Unmarshal([]byte(raw), &m)
+	return m, err
+}
+
+// pairHandshake runs the one-time pairing (see crypto.go).
+func (s *Server) pairHandshake(e *extConn, origin string, hello extMsg) error {
+	if !validNonce(hello.Nonce) {
+		return errors.New("bad pairing request")
+	}
+	pubExtBytes, err := hex.DecodeString(hello.Pub)
+	if err != nil {
+		return errors.New("bad pairing request")
+	}
+	pubExt, err := ecdh.P256().NewPublicKey(pubExtBytes)
+	if err != nil {
+		return errors.New("bad pairing request")
+	}
+	code, err := s.pair.beginPair(origin)
+	if err != nil {
+		return err
+	}
+	priv, err := ecdh.P256().GenerateKey(rand.Reader)
+	if err != nil {
+		return err
+	}
+	shared, err := priv.ECDH(pubExt)
+	if err != nil {
+		return errors.New("bad pairing request")
+	}
+	nonce, err := randomHex(16)
+	if err != nil {
+		return err
+	}
+	pubBridge := hex.EncodeToString(priv.PublicKey().Bytes())
+	tr := pairTranscript(origin, hello.Pub, pubBridge, hello.Nonce, nonce)
+	ck := codeKey(code, nonce)
+	if err := e.send(map[string]string{"type": "pair-challenge", "pub": pubBridge, "nonce": nonce, "proof": hmacHex(ck, "bridge|"+tr)}); err != nil {
+		return err
+	}
+	m, err := e.receive(2 * time.Minute)
+	if err != nil {
+		return err
+	}
+	if m.Type != "pair-confirm" || !hmacOK(ck, "ext|"+tr, m.Proof) {
+		return errCodeWrong
+	}
+	if err := s.pair.completePair(code, hmacSum(shared, "oko-key|"+tr), origin); err != nil {
+		return err
+	}
+	logf("paired with %s", origin)
+	return e.send(map[string]string{"type": "paired"})
+}
+
+// helloHandshake authenticates a returning extension both ways.
+func (s *Server) helloHandshake(e *extConn, origin string, hello extMsg) error {
+	key, ok := s.pair.key(origin)
+	if !ok {
+		if s.pair.Paired() == "" {
+			return errors.New("not paired: run 'oko ext pair' and enter the code in the popup")
+		}
+		return errors.New("not the paired extension: run 'oko ext pair' and enter the code in the popup")
+	}
+	if !validNonce(hello.Nonce) {
+		return errors.New("bad hello")
+	}
+	nonce, err := randomHex(16)
+	if err != nil {
+		return err
+	}
+	if err := e.send(map[string]string{"type": "challenge", "nonce": nonce, "proof": hmacHex(key, helloBridgeMsg(origin, hello.Nonce, nonce))}); err != nil {
+		return err
+	}
+	m, err := e.receive(helloTimeout)
+	if err != nil {
+		return err
+	}
+	if m.Type != "auth" || !hmacOK(key, helloExtMsg(origin, hello.Nonce, nonce), m.Proof) {
+		return errors.New("extension could not prove the pairing: run 'oko ext pair' and enter the code in the popup")
+	}
+	return e.send(map[string]string{"type": "welcome"})
 }
 
 // extCall sends one request to the extension and waits for its answer.

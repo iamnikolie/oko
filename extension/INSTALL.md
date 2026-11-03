@@ -41,12 +41,28 @@ the extension talks only to `127.0.0.1`.
 2. `chrome://extensions` → oko → **Remove**.
 3. Optional: `rm -rf ~/.oko/extension ~/.oko/profiles/mine`.
 
+## Updating
+
+After an update of oko, reload the extension in `chrome://extensions` (the
+circular arrow on its card). Extension 0.2 pairs differently from 0.1: run
+`oko ext pair` once more and type the new code.
+
 ## How it is guarded
 
+- Both sides prove themselves on every connection, the bridge first: an HMAC
+  challenge-response with a key both derived during pairing (ECDH + the
+  one-time code). The key never crosses the socket. Something else listening
+  on the port gets only random nonces, and the popup shows "bridge not
+  trusted".
+- Pairing: the code (10 minutes, one use, 5 attempts) is never sent either;
+  each side proves it with an HMAC keyed by PBKDF2(code).
 - The bridge listens on `127.0.0.1` only (`$OKO_EXT_PORT`, default 47222) and
-  answers only requests addressed to `127.0.0.1`/`localhost`.
-- The extension is admitted only with the token from pairing and from the
-  extension origin it paired from; only the token's hash is on disk.
-- oko commands present a secret from `~/.oko/extension/client.secret` (0600);
-  requests carrying a browser `Origin` are refused, so web pages cannot reach it.
-- Browser-level CDP (windows, downloads, other tabs) is not relayed at all.
+  answers only requests addressed to `127.0.0.1`/`localhost`; requests with a
+  browser `Origin` are refused on the oko-command side.
+- oko commands prove they hold `~/.oko/extension/client.secret` (0600) the same
+  way, after the bridge proved it first, and get a short-lived ticket; the
+  secret itself is never sent.
+- Only the CDP methods page commands need reach a tab (`cdp-policy.json`,
+  checked by the bridge and again by the extension): no cookies, no storage,
+  no other tabs, no browser-level calls, no downloads; navigation only to
+  http(s) and about:blank.

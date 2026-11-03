@@ -190,6 +190,10 @@ func (s *session) page() (*rod.Page, error) {
 		if t == nil {
 			t = s.freeTab(ts)
 		}
+		if t == nil && s.prof.State.Extension && len(ts) > 0 {
+			return nil, fmt.Errorf("every tab handed to oko is held by another oko session (see 'oko -p %s tabs'); "+
+				"use --tab <id>, or hand over another tab", s.prof.Name)
+		}
 		if t == nil {
 			p, err := s.b.Page(proto.TargetCreateTarget{URL: "about:blank", Background: true})
 			if err != nil {
@@ -286,7 +290,9 @@ func (s *session) freeTab(ts []*proto.TargetTargetInfo) *proto.TargetTargetInfo 
 		if s.owner(t.TargetID) != "" {
 			continue
 		}
-		if s.me.Key == "default" || t.URL == "about:blank" || t.URL == "chrome://newtab/" {
+		// On an extension profile every tab was handed over on purpose: any
+		// session may take one nobody holds.
+		if s.me.Key == "default" || s.prof.State.Extension || t.URL == "about:blank" || t.URL == "chrome://newtab/" {
 			return t
 		}
 	}

@@ -1,0 +1,25 @@
+{
+  "comment": "CDP methods the oko bridge may relay to a handed-over tab. Both sides enforce it: the bridge for its clients, the extension for the bridge. 'client' is what oko commands may call; 'bridge' is what the bridge itself sends (frame auto-attach, undo, idle clean-up). Anything else - cookies, Storage, Target, Browser, Tracing, IO, Fetch, SystemInfo - is refused. Page.navigate is further limited to http(s) and about:blank.",
+  "client": [
+    "DOM.describeNode", "DOM.disable", "DOM.discardSearchResults", "DOM.enable", "DOM.focus", "DOM.getBoxModel",
+    "DOM.getContentQuads", "DOM.getDocument", "DOM.getNodeForLocation", "DOM.getOuterHTML", "DOM.getSearchResults",
+    "DOM.performSearch", "DOM.querySelector", "DOM.querySelectorAll", "DOM.requestNode", "DOM.resolveNode",
+    "DOM.scrollIntoViewIfNeeded", "DOM.setFileInputFiles",
+    "DOMSnapshot.captureSnapshot", "DOMSnapshot.disable", "DOMSnapshot.enable",
+    "Emulation.clearDeviceMetricsOverride", "Emulation.setDeviceMetricsOverride",
+    "Input.dispatchKeyEvent", "Input.dispatchMouseEvent", "Input.insertText",
+    "Log.disable", "Log.enable",
+    "Network.disable", "Network.enable", "Network.getResponseBody",
+    "Page.addScriptToEvaluateOnNewDocument", "Page.captureScreenshot", "Page.createIsolatedWorld", "Page.disable",
+    "Page.enable", "Page.getFrameTree", "Page.getLayoutMetrics", "Page.getNavigationHistory", "Page.getResourceContent",
+    "Page.getResourceTree", "Page.handleJavaScriptDialog", "Page.navigate", "Page.navigateToHistoryEntry", "Page.reload",
+    "Page.removeScriptToEvaluateOnNewDocument", "Page.resetNavigationHistory", "Page.screencastFrameAck",
+    "Page.setLifecycleEventsEnabled", "Page.startScreencast", "Page.stopLoading", "Page.stopScreencast",
+    "Performance.disable", "Performance.enable", "Performance.getMetrics",
+    "Runtime.awaitPromise", "Runtime.callFunctionOn", "Runtime.disable", "Runtime.enable", "Runtime.evaluate",
+    "Runtime.getProperties", "Runtime.releaseObject", "Runtime.releaseObjectGroup", "Runtime.runIfWaitingForDebugger"
+  ],
+  "bridge": [
+    "Target.setAutoAttach"
+  ]
+}

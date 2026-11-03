@@ -17,14 +17,14 @@ function showError(e) {
 
 const LINK = {
   on: ['connected', 'on'], connecting: ['connecting…', ''], off: ['oko bridge not running', 'bad'],
-  refused: ['refused', 'bad'], unpaired: ['not paired', 'bad'],
+  refused: ['refused', 'bad'], unpaired: ['not paired', 'bad'], untrusted: ['bridge not trusted', 'bad'],
 };
 
 function render(s) {
   const [label, cls] = LINK[s.link] || [s.link, ''];
   $('link').textContent = label;
   $('link').className = 'pill ' + cls;
-  if (s.link === 'refused' && s.linkError) showError(s.linkError);
+  if ((s.link === 'refused' || s.link === 'untrusted') && s.linkError) showError(s.linkError);
   $('pairing').hidden = !(forcePair || !s.paired || s.link === 'refused');
   $('port').value = s.port;
   $('allow-new').checked = !!s.allowNew;

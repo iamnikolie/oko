@@ -1,9 +1,15 @@
 package bridge
 
 import (
+	"bytes"
 	"context"
+	"crypto/ecdh"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -17,14 +23,7 @@ import (
 	"golang.org/x/net/websocket"
 )
 
-func readFile(t *testing.T, p string) string {
-	t.Helper()
-	b, err := os.ReadFile(p)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return string(b)
-}
+func writeFile(p, s string) error { return os.WriteFile(p, []byte(s), 0o600) }
 
 type testBridge struct {
 	t      *testing.T
@@ -44,6 +43,8 @@ func newTestBridge(t *testing.T) *testBridge {
 	t.Cleanup(func() { _ = ln.Close() })
 	return &testBridge{t: t, srv: srv, port: port, secret: srv.secret}
 }
+
+func (b *testBridge) client() *Client { return &Client{Port: b.port, secret: b.secret} }
 
 func (b *testBridge) url(path string) string { return fmt.Sprintf("127.0.0.1:%d%s", b.port, path) }
 
@@ -120,6 +121,72 @@ func (e *fakeExt) tabs(t *testing.T, allowNew bool, tabs ...Tab) {
 	}
 }
 
+var errBridgeProof = fmt.Errorf("bridge proof did not check out")
+
+// extPair plays the extension's side of pairing (extension/protocol.js).
+func extPair(t *testing.T, b *testBridge, origin, code string) ([]byte, *fakeExt, map[string]string, error) {
+	t.Helper()
+	priv, err := ecdh.P256().GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pubExt := hex.EncodeToString(priv.PublicKey().Bytes())
+	nonce, _ := randomHex(16)
+	e, reply := dialExt(t, b, origin, map[string]string{"type": "pair", "pub": pubExt, "nonce": nonce, "version": "test", "product": "Chrome/1"})
+	if reply["type"] != "pair-challenge" {
+		return nil, e, reply, fmt.Errorf("pair: %v", reply)
+	}
+	tr := pairTranscript(origin, pubExt, reply["pub"], nonce, reply["nonce"])
+	ck := codeKey(code, reply["nonce"])
+	if !hmacOK(ck, "bridge|"+tr, reply["proof"]) {
+		return nil, e, reply, errBridgeProof
+	}
+	pb, _ := hex.DecodeString(reply["pub"])
+	peer, err := ecdh.P256().NewPublicKey(pb)
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared, _ := priv.ECDH(peer)
+	key := hmacSum(shared, "oko-key|"+tr)
+	final := e.exchange(t, map[string]string{"type": "pair-confirm", "proof": hmacHex(ck, "ext|"+tr)})
+	if final["type"] != "paired" {
+		return nil, e, final, fmt.Errorf("confirm: %v", final)
+	}
+	return key, e, final, nil
+}
+
+// extHello plays a returning extension: it checks the bridge's proof first.
+func extHello(t *testing.T, b *testBridge, origin string, key []byte) (*fakeExt, map[string]string, error) {
+	t.Helper()
+	nonce, _ := randomHex(16)
+	e, reply := dialExt(t, b, origin, map[string]string{"type": "hello", "nonce": nonce, "version": "test", "product": "Chrome/1"})
+	if reply["type"] != "challenge" {
+		return e, reply, fmt.Errorf("hello: %v", reply)
+	}
+	if !hmacOK(key, helloBridgeMsg(origin, nonce, reply["nonce"]), reply["proof"]) {
+		return e, reply, errBridgeProof
+	}
+	final := e.exchange(t, map[string]string{"type": "auth", "proof": hmacHex(key, helloExtMsg(origin, nonce, reply["nonce"]))})
+	if final["type"] != "welcome" {
+		return e, final, fmt.Errorf("auth: %v", final)
+	}
+	return e, final, nil
+}
+
+func (e *fakeExt) exchange(t *testing.T, msg map[string]string) map[string]string {
+	t.Helper()
+	if err := websocket.JSON.Send(e.ws, msg); err != nil {
+		t.Fatal(err)
+	}
+	var reply map[string]string
+	_ = e.ws.SetReadDeadline(time.Now().Add(5 * time.Second))
+	if err := websocket.JSON.Receive(e.ws, &reply); err != nil {
+		return map[string]string{"type": "closed"}
+	}
+	_ = e.ws.SetReadDeadline(time.Time{})
+	return reply
+}
+
 // paired returns a connected, paired fake extension.
 func paired(t *testing.T, b *testBridge) *fakeExt {
 	t.Helper()
@@ -127,9 +194,9 @@ func paired(t *testing.T, b *testBridge) *fakeExt {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e, reply := dialExt(t, b, testOrigin, map[string]string{"type": "pair", "code": code, "version": "test", "product": "Chrome/1"})
-	if reply["type"] != "paired" || reply["token"] == "" {
-		t.Fatalf("pair reply %v", reply)
+	_, e, _, err := extPair(t, b, testOrigin, code)
+	if err != nil {
+		t.Fatal(err)
 	}
 	go e.serve()
 	waitUntil(t, func() bool { return b.srv.Status().Connected })
@@ -154,7 +221,11 @@ type cdpConn struct {
 
 func dialCDP(t *testing.T, b *testBridge) *cdpConn {
 	t.Helper()
-	c, err := cdp.StartWithURL(context.Background(), "ws://"+b.url("/cdp/"+b.secret), nil)
+	u, err := b.client().CDPURL(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := cdp.StartWithURL(context.Background(), u, nil)
 	if err != nil {
 		t.Fatalf("dial /cdp: %v", err)
 	}
@@ -199,6 +270,10 @@ func (c *cdpConn) call(t *testing.T, session, method string, params interface{})
 
 func TestGuard(t *testing.T) {
 	b := newTestBridge(t)
+	c := b.client()
+	if err := c.auth(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	post := func(path string, hdr map[string]string) int {
 		req, _ := http.NewRequest(http.MethodPost, "http://"+b.url(path), http.NoBody)
 		for k, v := range hdr {
@@ -215,71 +290,142 @@ func TestGuard(t *testing.T) {
 		_ = resp.Body.Close()
 		return resp.StatusCode
 	}
-	ok := map[string]string{"X-Oko-Secret": b.secret}
-	if c := post("/control/status", ok); c != http.StatusOK {
-		t.Fatalf("status with secret: %d", c)
+	ok := map[string]string{"X-Oko-Ticket": c.ticket}
+	if code := post("/control/status", ok); code != http.StatusOK {
+		t.Fatalf("status with ticket: %d", code)
 	}
-	if c := post("/control/status", nil); c != http.StatusUnauthorized {
-		t.Fatalf("no secret: %d", c)
+	if code := post("/control/status", nil); code != http.StatusUnauthorized {
+		t.Fatalf("no ticket: %d", code)
 	}
-	if c := post("/control/status", map[string]string{"X-Oko-Secret": "nope"}); c != http.StatusUnauthorized {
-		t.Fatalf("wrong secret: %d", c)
+	if code := post("/control/status", map[string]string{"X-Oko-Ticket": strings.Repeat("0", 64)}); code != http.StatusUnauthorized {
+		t.Fatalf("wrong ticket: %d", code)
 	}
-	if c := post("/control/status", map[string]string{"X-Oko-Secret": b.secret, "Origin": "https://evil.example"}); c != http.StatusForbidden {
-		t.Fatalf("browser origin on the client API: %d", c)
+	if code := post("/control/status", map[string]string{"X-Oko-Secret": b.secret}); code != http.StatusUnauthorized {
+		t.Fatalf("the long-term secret works as a bearer: %d", code)
 	}
-	if c := post("/control/status", map[string]string{"X-Oko-Secret": b.secret, "Host": "evil.example:" + fmt.Sprint(b.port)}); c != http.StatusForbidden {
-		t.Fatalf("rebound host: %d", c)
+	if code := post("/control/status", map[string]string{"X-Oko-Ticket": c.ticket, "Origin": "https://evil.example"}); code != http.StatusForbidden {
+		t.Fatalf("browser origin on the client API: %d", code)
+	}
+	if code := post("/control/status", map[string]string{"X-Oko-Ticket": c.ticket, "Host": "evil.example:" + fmt.Sprint(b.port)}); code != http.StatusForbidden {
+		t.Fatalf("rebound host: %d", code)
 	}
 	req, _ := http.NewRequest(http.MethodGet, "http://"+b.url("/control/status"), http.NoBody)
-	req.Header.Set("X-Oko-Secret", b.secret)
+	req.Header.Set("X-Oko-Ticket", c.ticket)
 	if resp, err := http.DefaultClient.Do(req); err != nil || resp.StatusCode != http.StatusMethodNotAllowed {
 		t.Fatalf("GET on control: %v %v", resp, err)
 	}
+	// A CLI that cannot prove the secret gets no ticket.
+	bad := &Client{Port: b.port, secret: strings.Repeat("f", 64)}
+	if err := bad.auth(context.Background()); err == nil {
+		t.Fatal("ticket for a client without the secret")
+	}
 
-	// A web page cannot open the CDP socket even with the secret: browsers
+	// A web page cannot open the CDP socket even with a ticket: browsers
 	// always send an Origin on websockets.
-	cfg, _ := websocket.NewConfig("ws://"+b.url("/cdp/"+b.secret), "https://evil.example")
+	cfg, _ := websocket.NewConfig("ws://"+b.url("/cdp/"+c.ticket), "https://evil.example")
 	if _, err := websocket.DialConfig(cfg); err == nil {
 		t.Fatal("CDP socket opened from a web origin")
 	}
-	if _, err := cdp.StartWithURL(context.Background(), "ws://"+b.url("/cdp/wrong"), nil); err == nil {
-		t.Fatal("CDP socket opened with a wrong secret")
+	for _, path := range []string{"/cdp/wrong", "/cdp/" + b.secret} {
+		if _, err := cdp.StartWithURL(context.Background(), "ws://"+b.url(path), nil); err == nil {
+			t.Fatalf("CDP socket opened with %s", path)
+		}
+	}
+}
+
+// TestCLIRefusesImpostor: a listener on the port that does not hold the
+// client secret is refused, and the secret never reaches it.
+func TestCLIRefusesImpostor(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var seen []string
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		mu.Lock()
+		seen = append(seen, r.URL.String()+" "+fmt.Sprint(r.Header)+" "+string(body))
+		mu.Unlock()
+		// It cannot compute the proof; it echoes something plausible.
+		_ = json.NewEncoder(w).Encode(map[string]string{"nonce": strings.Repeat("a", 32), "proof": strings.Repeat("b", 64), "ticket": "t"})
+	})}
+	go func() { _ = srv.Serve(ln) }()
+	defer func() { _ = srv.Close() }()
+	secret := strings.Repeat("5", 64)
+	c := &Client{Port: ln.Addr().(*net.TCPAddr).Port, secret: secret}
+	if _, err := c.Status(context.Background()); !errors.Is(err, ErrNotOurBridge) {
+		t.Fatalf("impostor accepted: %v", err)
+	}
+	if _, err := c.CDPURL(context.Background()); !errors.Is(err, ErrNotOurBridge) {
+		t.Fatalf("CDP URL from an impostor: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, s := range seen {
+		if strings.Contains(s, secret) || strings.Contains(s, "auth/finish") || strings.Contains(s, "/control/status") {
+			t.Fatalf("impostor got more than a nonce: %s", s)
+		}
 	}
 }
 
 func TestExtensionAuth(t *testing.T) {
 	b := newTestBridge(t)
-	_, r := dialExt(t, b, testOrigin, map[string]string{"type": "hello", "token": "whatever"})
-	if r["type"] != "refused" || !strings.Contains(r["reason"], "not paired") {
-		t.Fatalf("unpaired hello: %v", r)
+	if _, r, err := extHello(t, b, testOrigin, make([]byte, 32)); err == nil || r["type"] != "refused" || !strings.Contains(r["reason"], "not paired") {
+		t.Fatalf("unpaired hello: %v %v", r, err)
 	}
 	code, _ := b.srv.pair.NewCode()
-	_, r = dialExt(t, b, "https://evil.example", map[string]string{"type": "pair", "code": code})
-	if r["type"] != "refused" {
-		t.Fatalf("pairing from a web origin: %v", r)
+	if _, _, r, err := extPair(t, b, "https://evil.example", code); err == nil || r["type"] != "refused" {
+		t.Fatalf("pairing from a web origin: %v %v", r, err)
 	}
-	_, r = dialExt(t, b, testOrigin, map[string]string{"type": "pair", "code": code})
-	token := r["token"]
-	if r["type"] != "paired" || token == "" {
-		t.Fatalf("pair: %v", r)
+	// A wrong code: the extension sees the bridge's proof fail and stops; a
+	// forged confirmation is refused by the bridge.
+	if _, _, _, err := extPair(t, b, testOrigin, "WRON-GCOD"); err != errBridgeProof {
+		t.Fatalf("wrong code: %v", err)
 	}
-	_, r = dialExt(t, b, testOrigin, map[string]string{"type": "hello", "token": token})
-	if r["type"] != "welcome" {
-		t.Fatalf("paired hello: %v", r)
+	nonce, _ := randomHex(16)
+	priv, _ := ecdh.P256().GenerateKey(rand.Reader)
+	e, r := dialExt(t, b, testOrigin, map[string]string{"type": "pair", "pub": hex.EncodeToString(priv.PublicKey().Bytes()), "nonce": nonce})
+	if r["type"] != "pair-challenge" {
+		t.Fatalf("challenge: %v", r)
+	}
+	if r := e.exchange(t, map[string]string{"type": "pair-confirm", "proof": strings.Repeat("0", 64)}); r["type"] != "refused" {
+		t.Fatalf("forged confirmation: %v", r)
+	}
+	key, _, _, err := extPair(t, b, testOrigin, code)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if saved, _ := b.srv.pair.key(testOrigin); !bytes.Equal(saved, key) {
+		t.Fatal("the two sides derived different keys")
+	}
+	if _, _, _, err := extPair(t, b, testOrigin, code); err == nil {
+		t.Fatal("pairing code worked twice")
+	}
+	if _, r, err := extHello(t, b, testOrigin, key); err != nil {
+		t.Fatalf("paired hello: %v %v", r, err)
 	}
 	// A second link (worker restart) replaces the first without harm.
-	_, r = dialExt(t, b, testOrigin, map[string]string{"type": "hello", "token": token})
-	if r["type"] != "welcome" || !b.srv.Status().Connected {
-		t.Fatalf("second hello: %v", r)
+	if _, r, err := extHello(t, b, testOrigin, key); err != nil || !b.srv.Status().Connected {
+		t.Fatalf("second hello: %v %v", r, err)
 	}
-	_, r = dialExt(t, b, "chrome-extension://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", map[string]string{"type": "hello", "token": token})
-	if r["type"] != "refused" {
-		t.Fatalf("token from another extension: %v", r)
+	if _, r, err := extHello(t, b, "chrome-extension://bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", key); err == nil || r["type"] != "refused" {
+		t.Fatalf("key from another extension: %v %v", r, err)
 	}
-	_, r = dialExt(t, b, testOrigin, map[string]string{"type": "hello", "token": strings.Repeat("0", 64)})
-	if r["type"] != "refused" {
-		t.Fatalf("unknown token: %v", r)
+	wrong := append([]byte{}, key...)
+	wrong[0] ^= 0xff
+	if _, _, err := extHello(t, b, testOrigin, wrong); err != errBridgeProof {
+		t.Fatalf("an extension with another key trusted the bridge: %v", err)
+	}
+	// An extension that cannot prove the key is refused even after the
+	// bridge proved itself.
+	nonce, _ = randomHex(16)
+	e, r = dialExt(t, b, testOrigin, map[string]string{"type": "hello", "nonce": nonce})
+	if r["type"] != "challenge" {
+		t.Fatalf("challenge: %v", r)
+	}
+	if r := e.exchange(t, map[string]string{"type": "auth", "proof": strings.Repeat("0", 64)}); r["type"] != "refused" {
+		t.Fatalf("unproven extension admitted: %v", r)
 	}
 }
 
@@ -333,8 +479,8 @@ func TestRelay(t *testing.T) {
 	if ops := e.seen("Runtime.evaluate"); len(ops) != 1 || ops[0].TabID != 7 || ops[0].Op != "cdp" {
 		t.Fatalf("relayed ops %+v", ops)
 	}
-	if _, err := c.call(t, sid, "Bad.method", nil); err == nil || !strings.Contains(err.Error(), "wasn't found") {
-		t.Fatalf("extension error not relayed: %v", err)
+	if _, err := c.call(t, sid, "Page.reload", nil); err != nil {
+		t.Fatalf("allowed method: %v", err)
 	}
 	if _, err := c.call(t, "NOPE", "Runtime.evaluate", nil); err == nil {
 		t.Fatal("unknown session accepted")
@@ -346,6 +492,18 @@ func TestRelay(t *testing.T) {
 	}
 	if len(e.seen("Page.navigate")) != 0 {
 		t.Fatal("restricted navigation reached the extension")
+	}
+
+	// Only page-scoped methods pass: cookies, storage, targets and the browser
+	// stay out of reach of a tab session.
+	for _, m := range []string{"Network.getAllCookies", "Network.getCookies", "Storage.getCookies", "Target.createTarget",
+		"Target.getTargets", "Target.attachToTarget", "Target.setAutoAttach", "Browser.getVersion", "Tracing.start", "Fetch.enable"} {
+		if _, err := c.call(t, sid, m, map[string]string{"url": "about:blank"}); err == nil || !strings.Contains(err.Error(), "not allowed") {
+			t.Errorf("%s through a tab session: %v", m, err)
+		}
+		if len(e.seen(m)) != 0 {
+			t.Errorf("%s reached the extension", m)
+		}
 	}
 
 	// Events of the tab reach the session.
@@ -382,17 +540,14 @@ func TestRelay(t *testing.T) {
 	if _, err := c.call(t, sid, "Page.addScriptToEvaluateOnNewDocument", map[string]string{"source": "1"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := c.call(t, sid, "Fetch.enable", nil); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := c.call(t, "", "Target.detachFromTarget", map[string]string{"sessionId": sid}); err != nil {
 		t.Fatal(err)
 	}
 	if rm := e.seen("Page.removeScriptToEvaluateOnNewDocument"); len(rm) != 1 || !strings.Contains(string(rm[0].Params), `"7"`) {
 		t.Fatalf("script not removed: %+v", rm)
 	}
-	if len(e.seen("Fetch.disable")) == 0 || len(e.seen("Runtime.disable")) == 0 {
-		t.Fatal("interception / domains left on after the last session")
+	if len(e.seen("Runtime.disable")) == 0 || len(e.seen("Page.disable")) == 0 {
+		t.Fatal("domains left on after the last session")
 	}
 
 	// A tab the user releases disappears for oko.

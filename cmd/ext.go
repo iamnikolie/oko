@@ -62,6 +62,11 @@ func checkExtSupport(cmd *cobra.Command) error {
 	if what, ok := extUnsupported[name]; ok {
 		return errExtUnsupported(what)
 	}
+	if cmd.HasParent() && cmd.Parent().Name() == "perf" && name != "perf" {
+		// Tracing and lighthouse see the whole browser; heap snapshots are not
+		// served to extensions.
+		return errExtUnsupported("'oko perf " + name + "'")
+	}
 	if name == "up" {
 		for _, f := range []string{"headless", "proxy", "lang", "idle", "native-selects"} {
 			if cmd.Flags().Changed(f) {
@@ -85,7 +90,11 @@ func connectExtension(ctx context.Context, p *chrome.Profile) (*session, error) 
 		return nil, err
 	}
 	_ = st
-	b := rod.New().ControlURL(c.CDPURL()).NoDefaultDevice().Context(ctx)
+	u, err := c.CDPURL(ctx)
+	if err != nil {
+		return nil, err
+	}
+	b := rod.New().ControlURL(u).NoDefaultDevice().Context(ctx)
 	if err := b.Connect(); err != nil {
 		return nil, fmt.Errorf("attach to the oko bridge on port %d: %w", c.Port, err)
 	}

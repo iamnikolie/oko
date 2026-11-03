@@ -216,7 +216,7 @@ func TestExtensionProfile(t *testing.T) {
 		t.Fatalf("no code in:\n%s", out)
 	}
 	h.mustJS(fmt.Sprintf("oko.setPort(%d)", port))
-	if _, err := h.js(`oko.pair("WRONG-CODE")`); err == nil || !strings.Contains(err.Error(), "wrong pairing code") {
+	if _, err := h.js(`oko.pair("WRONG-CODE")`); err == nil || !strings.Contains(err.Error(), "did not prove the pairing code") {
 		lg, _ := os.ReadFile(filepath.Join(home, "extension", "bridge.log"))
 		st, _ := h.js("oko.state()")
 		t.Fatalf("wrong code accepted: %v\nstate: %s\nbridge log:\n%s", err, st, lg)
@@ -326,6 +326,28 @@ func TestExtensionProfile(t *testing.T) {
 	must(t, oko(t, "-p", "mine", "open", "--new", base+"/cards.html"), "Cards")
 	must(t, oko(t, "ext", "status"), "(opened by oko)")
 	oko(t, "-p", "mine", "close")
+
+	// Refs survive giving the tab back and handing it over again.
+	oko(t, "-p", "mine", "open", base+"/form.html")
+	rs := oko(t, "-p", "mine", "snap")
+	send := ref(t, rs, `button "Send"`)
+	h.mustJS(fmt.Sprintf("oko.releaseTab(%d)", form))
+	must(t, oko(t, "!", "-p", "mine", "click", send), "not handed to oko")
+	h.mustJS(fmt.Sprintf("oko.giveTab(%d)", form))
+	waitFor(t, func() bool { return strings.Contains(oko(t, "-p", "mine", "tabs"), "Form") })
+	oko(t, "-p", "mine", "click", send)
+
+	// perf subcommands that see the whole browser are refused.
+	must(t, oko(t, "!", "-p", "mine", "perf", "trace"), "not available on an extension profile")
+
+	// An agent session's first command takes a handed tab nobody holds;
+	// then it is that session's, and others are told so.
+	other2 := h.openTab(base + "/article.html")
+	h.mustJS(fmt.Sprintf("oko.giveTab(%d)", other2))
+	waitFor(t, func() bool { return strings.Contains(oko(t, "-p", "mine", "tabs"), "Article") })
+	must(t, oko(t, "--session", "agent-1", "-p", "mine", "read"), "Article")
+	must(t, oko(t, "!", "--session", "agent-2", "-p", "mine", "read"), "held by another oko session")
+	h.mustJS(fmt.Sprintf("oko.releaseTab(%d)", other2))
 
 	// Release: the tab leaves oko's reach.
 	h.mustJS(fmt.Sprintf("oko.releaseTab(%d)", form))

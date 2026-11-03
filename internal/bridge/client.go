@@ -21,6 +21,7 @@ type Client struct {
 	Dir    string
 	Port   int
 	secret string
+	ticket string
 }
 
 // NewClient prepares a client for the bridge whose state lives under home.
@@ -33,18 +34,91 @@ func NewClient(home string) (*Client, error) {
 	return &Client{Dir: dir, Port: Port(), secret: secret}, nil
 }
 
-// CDPURL is the websocket URL oko commands attach to instead of Chrome's.
-func (c *Client) CDPURL() string {
-	return fmt.Sprintf("ws://127.0.0.1:%d/cdp/%s", c.Port, c.secret)
+// CDPURL is the websocket URL oko commands attach to instead of Chrome's. It
+// carries a ticket from the handshake, never the secret.
+func (c *Client) CDPURL(ctx context.Context) (string, error) {
+	if err := c.auth(ctx); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("ws://127.0.0.1:%d/cdp/%s", c.Port, c.ticket), nil
 }
 
-func (c *Client) do(ctx context.Context, path string, out interface{}) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/control/%s", c.Port, path), http.NoBody)
+// ErrNotOurBridge means something answers on the port that cannot prove it
+// holds this oko home's client secret.
+var ErrNotOurBridge = errors.New("not your oko bridge")
+
+func (c *Client) post(ctx context.Context, path string, body interface{}) (*http.Response, error) {
+	var rd io.Reader = http.NoBody
+	if body != nil {
+		b, _ := json.Marshal(body)
+		rd = strings.NewReader(string(b))
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, fmt.Sprintf("http://127.0.0.1:%d/control/%s", c.Port, path), rd)
+	if err != nil {
+		return nil, err
+	}
+	if c.ticket != "" {
+		req.Header.Set("X-Oko-Ticket", c.ticket)
+	}
+	return (&http.Client{Timeout: 15 * time.Second}).Do(req)
+}
+
+// auth runs the handshake once per client: the bridge proves it holds the
+// client secret first; only then does the CLI prove it and get a ticket. The
+// secret itself never goes over the socket.
+func (c *Client) auth(ctx context.Context) error {
+	if c.ticket != "" {
+		return nil
+	}
+	nonce, err := randomHex(16)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("X-Oko-Secret", c.secret)
-	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	resp, err := c.post(ctx, "auth/start", map[string]string{"nonce": nonce})
+	if err != nil {
+		return err
+	}
+	var start struct {
+		Nonce string `json:"nonce"`
+		Proof string `json:"proof"`
+	}
+	err = json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&start)
+	_ = resp.Body.Close()
+	if err != nil || resp.StatusCode != http.StatusOK || !validNonce(start.Nonce) ||
+		!hmacOK([]byte(c.secret), cliBridgeMsg(nonce, start.Nonce), start.Proof) {
+		return fmt.Errorf("%w: something on 127.0.0.1:%d could not prove it holds this oko home's secret; "+
+			"stop it, or set $OKO_EXT_PORT (and the same port in the extension popup)", ErrNotOurBridge, c.Port)
+	}
+	resp, err = c.post(ctx, "auth/finish", map[string]string{"nonce": start.Nonce, "proof": hmacHex([]byte(c.secret), cliClientMsg(nonce, start.Nonce))})
+	if err != nil {
+		return err
+	}
+	var fin struct {
+		Ticket string `json:"ticket"`
+	}
+	err = json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&fin)
+	_ = resp.Body.Close()
+	if err != nil || resp.StatusCode != http.StatusOK || fin.Ticket == "" {
+		return fmt.Errorf("bridge refused oko's proof (status %d)", resp.StatusCode)
+	}
+	c.ticket = fin.Ticket
+	return nil
+}
+
+func (c *Client) do(ctx context.Context, path string, out interface{}) error {
+	if err := c.auth(ctx); err != nil {
+		return err
+	}
+	resp, err := c.post(ctx, path, nil)
+	if err == nil && resp.StatusCode == http.StatusUnauthorized {
+		// The bridge restarted and forgot the ticket: shake hands again.
+		_ = resp.Body.Close()
+		c.ticket = ""
+		if err := c.auth(ctx); err != nil {
+			return err
+		}
+		resp, err = c.post(ctx, path, nil)
+	}
 	if err != nil {
 		return err
 	}
@@ -56,9 +130,6 @@ func (c *Client) do(ctx context.Context, path string, out interface{}) error {
 		}
 		if json.Unmarshal(b, &e) == nil && e.Error != "" {
 			return errors.New(e.Error)
-		}
-		if resp.StatusCode == http.StatusUnauthorized {
-			return fmt.Errorf("port %d answers but refuses oko's secret: another oko home or another program holds it (set $OKO_EXT_PORT)", c.Port)
 		}
 		return fmt.Errorf("bridge: %s", strings.TrimSpace(string(b)))
 	}
