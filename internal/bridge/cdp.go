@@ -220,7 +220,7 @@ func (s *Server) browserCall(c *cdpClient, req cdpReq) (json.RawMessage, error) 
 			if len(s.Status().Tabs) == 0 {
 				return nil, errNoTab
 			}
-			return nil, &cdpError{Code: -32000, Message: "oko may not open tabs in your Chrome: tick \"Allow oko to open its own tabs\" " +
+			return nil, &cdpError{Code: -32000, Message: "oko may not open tabs in your Chrome: turn on \"Let oko open its own tabs\" " +
 				"in the oko extension popup, or hand over another tab"}
 		}
 		if why := restrictedURL(p.URL); why != "" {

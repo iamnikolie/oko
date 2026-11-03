@@ -29,7 +29,8 @@ header { display: flex; align-items: center; gap: 9px; padding-bottom: 12px; }
 
 .alert { margin: 0 0 12px; padding: 9px 11px; border-radius: 8px; background: var(--danger-soft); color: var(--danger); font-size: 12px; }
 .alert b { display: block; font-weight: 600; margin-bottom: 2px; }
-.alert span { color: var(--ink); opacity: .8; }
+.alert > span { color: var(--ink); opacity: .8; }
+.alert .why { margin: 4px 0 0; font: 11px/1.4 var(--mono); color: var(--muted); overflow-wrap: anywhere; }
 .error { margin: 0 0 12px; font-size: 12px; color: var(--danger); overflow-wrap: anywhere; }
 
 h2 { margin: 0 0 7px; font: 600 12px/1 var(--sans); color: var(--muted); display: flex; align-items: baseline; gap: 6px; }

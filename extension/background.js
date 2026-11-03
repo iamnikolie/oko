@@ -74,7 +74,7 @@ async function save() {
 const EYE = { on: 'on', refused: 'half', untrusted: 'half' }; // else 'off'
 const TITLE = {
   on: 'oko', connecting: 'oko: connecting', off: 'oko: bridge not running',
-  unpaired: 'oko: not paired', refused: 'oko: pairing refused', untrusted: 'oko: bridge not trusted',
+  unpaired: 'oko: not paired', refused: 'oko: pairing refused', untrusted: 'oko: link closed',
 };
 const DANGER = '#c8322f';
 const eyeIcon = (eye) => ({ 16: `icons/${eye}-16.png`, 32: `icons/${eye}-32.png`, 48: `icons/${eye}-48.png` });
@@ -136,7 +136,7 @@ export async function giveTab(tabId, own = false) {
   pushTabs();
 }
 
-export async function releaseTab(tabId, reason = 'released in the popup') {
+export async function releaseTab(tabId, reason = 'taken back in the popup') {
   await load();
   if (!controlled.has(tabId)) return;
   controlled.delete(tabId);
@@ -148,7 +148,7 @@ export async function releaseTab(tabId, reason = 'released in the popup') {
   pushTabs();
 }
 
-export async function releaseAll(reason = 'released with "Disconnect all"') {
+export async function releaseAll(reason = 'taken back with "Take all back"') {
   await load();
   for (const tabId of [...controlled.keys()]) await releaseTab(tabId, reason);
 }

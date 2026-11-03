@@ -364,7 +364,7 @@ func TestExtensionRelay(t *testing.T) {
 				t.Fatalf("state %+v", st)
 			}
 			// The toolbar shows the dropped session: red "!" and its title.
-			if got := h.mustJS(`chrome.action.getBadgeText({}).then(async (b) => b + "|" + await chrome.action.getTitle({}))`); got != `"!|oko: bridge not trusted"` {
+			if got := h.mustJS(`chrome.action.getBadgeText({}).then(async (b) => b + "|" + await chrome.action.getTitle({}))`); got != `"!|oko: link closed"` {
 				t.Fatalf("toolbar after a failed frame: %s", got)
 			}
 			time.Sleep(500 * time.Millisecond)

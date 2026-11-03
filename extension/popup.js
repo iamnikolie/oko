@@ -20,7 +20,7 @@ function showError(e) {
 // link -> [label, class, eye]
 const LINK = {
   on: ['connected', 'ok', 'on'], connecting: ['connecting…', '', 'off'], off: ['bridge not running', 'bad', 'off'],
-  refused: ['pairing refused', 'bad', 'half'], unpaired: ['not paired', 'bad', 'off'], untrusted: ['bridge not trusted', 'bad', 'half'],
+  refused: ['pairing refused', 'bad', 'half'], unpaired: ['not paired', 'bad', 'off'], untrusted: ['link closed', 'bad', 'half'],
 };
 
 function setEye(name) {
@@ -74,7 +74,11 @@ function render(s) {
 
   const untrusted = s.link === 'untrusted';
   $('untrusted').hidden = !untrusted;
-  if ((s.link === 'refused' || untrusted) && s.linkError) showError(s.linkError);
+  if (s.link === 'refused' && s.linkError) showError(s.linkError);
+  $('untrusted-held').hidden = !(untrusted && s.tabs.length);
+  const dropped = untrusted ? (s.linkError || '').replace(/^bridge not trusted:\s*/, '') : '';
+  $('untrusted-why').textContent = dropped;
+  $('untrusted-why').hidden = !dropped;
   const pairing = forcePair || !s.paired || s.link === 'refused' || untrusted;
   $('pairing').hidden = !pairing;
   $('pair-lead').hidden = untrusted;
@@ -96,7 +100,7 @@ function render(s) {
     $('cur-held').hidden = !curHeld;
     $('give').hidden = curHeld || !!why;
     $('release-cur').hidden = !curHeld;
-    const note = why || (curHeld ? '' : s.released[current.id] ? 'Taken back: ' + s.released[current.id] + '.' : '');
+    const note = why || (curHeld ? '' : s.released[current.id] ? 'oko no longer holds this tab: ' + s.released[current.id] + '.' : '');
     $('cur-note').textContent = note;
     $('cur-note').hidden = !note;
   }

@@ -15,24 +15,28 @@ the extension talks only to `127.0.0.1`.
 
 ## Use
 
-- On a tab oko may drive: oko icon → **Give this tab to oko**. The icon shows
-  `OKO` on that tab, and Chrome shows its yellow "oko started debugging this
-  browser" bar — Chrome always shows it for extension debuggers and it cannot be
-  hidden.
+- On a tab oko may drive: oko icon → **Give this tab to oko**. On that tab the
+  oko eye turns solid orange, and Chrome shows its yellow "oko started debugging
+  this browser" bar — Chrome always shows it for extension debuggers and it
+  cannot be hidden.
+- The toolbar eye is the link state: open with an orange pupil = connected;
+  closed = the bridge is not running or the extension is not paired;
+  half-lidded red with a `!` = the bridge failed a check or pairing was
+  refused (open the popup; pair again with a fresh code).
 - Then any command with `-p mine`: `oko -p mine snap`, `oko -p mine click e12`, …
-- oko sees only the tabs you gave it. To let it open tabs of its own, tick
-  **Allow oko to open its own tabs** in the popup; those tabs land in an orange
-  "oko" group and show `OKO+`.
+- oko sees only the tabs you gave it. To let it open tabs of its own, turn on
+  **Let oko open its own tabs** in the popup; those tabs land in an orange
+  "oko" group and are marked "opened by oko" in the popup.
 - Not possible: Chrome's own pages (`chrome://…`), the Web Store, other
   extensions' pages. `file://` pages need **Allow access to file URLs** on the
   extension's details page.
 - If a tab refuses because DevTools is open on it, close DevTools and give it again.
 
-## Release
+## Take tabs back
 
-- One tab: popup → **Release** (or **Release this tab**), or **Cancel** on
-  Chrome's yellow bar.
-- Everything: popup → **Disconnect all**, or `oko ext release`.
+- One tab: popup → **Take back** next to it (or **Take it back** on the tab
+  itself), or **Cancel** on Chrome's yellow bar.
+- Everything: popup → **Take all back**, or `oko ext release`.
 - `oko -p mine down` (or `oko ext stop`) releases every tab and stops the bridge.
 
 ## Roll back
@@ -52,8 +56,8 @@ circular arrow on its card). Extension 0.2 pairs differently from 0.1: run
 - Both sides prove themselves on every connection, the bridge first: an HMAC
   challenge-response with a key both derived during pairing (ECDH + the
   one-time code). The key never crosses the socket. Something else listening
-  on the port gets only random nonces, and the popup shows "bridge not
-  trusted".
+  on the port gets only random nonces, and the popup shows "link
+  closed".
 - After that every message, both ways, carries a counter and an HMAC under a
   key for that connection and direction. A program that relays a genuine
   handshake cannot add, change, replay or reorder a message: the first one

@@ -297,7 +297,7 @@ oko ext release          # give every tab back;  oko ext unpair / oko ext stop
   "no tab is handed to oko": ask the user to click the oko icon on the tab and
   press "Give this tab to oko". Never ask them to hand over banking or email.
 - `open --new`, `revive` and other new-tab paths need the popup's opt-in
-  "Allow oko to open its own tabs"; such tabs go into an orange "oko" group.
+  "Let oko open its own tabs"; such tabs go into an orange "oko" group.
 - Refused on an extension profile, with a reason: `window`, `viewport`, the
   element picker (`pick`, `picks`, `watch`), `perf trace|heap|lighthouse`,
   `up --headless/--proxy/--lang/--idle`. Only page-level CDP reaches the tab:
