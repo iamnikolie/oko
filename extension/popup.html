@@ -6,45 +6,68 @@
 <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <header>
-    <span class="name">oko</span>
-    <span id="link" class="pill">…</span>
-  </header>
-  <p id="error" class="error" hidden></p>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <symbol id="eye-held" viewBox="0 0 16 16"><path d="M.8 8C2.9 2.3 13.1 2.3 15.2 8 13.1 13.7 2.9 13.7.8 8Z" fill="var(--accent)" stroke="var(--on-accent)" stroke-width="1.2" stroke-linejoin="round"/><circle cx="8" cy="8" r="2.9" fill="var(--on-accent)"/></symbol>
+    <symbol id="eye-on" viewBox="0 0 16 16"><path d="M1.1 8C3.2 2.8 12.8 2.8 14.9 8 12.8 13.2 3.2 13.2 1.1 8Z" fill="none" stroke="var(--ink)" stroke-width="1.4" stroke-linejoin="round"/><circle cx="8" cy="8" r="2.7" fill="var(--accent)"/></symbol>
+    <symbol id="eye-half" viewBox="0 0 16 16"><path d="M1.1 8C3.2 2.8 12.8 2.8 14.9 8 12.8 13.2 3.2 13.2 1.1 8Z" fill="none" stroke="var(--danger)" stroke-width="1.4" stroke-linejoin="round"/><path d="M1.6 7.2C3.6 4 12.4 4 14.4 7.2Z" fill="var(--danger)"/><path d="M5.4 7.6a2.6 2.6 0 0 0 5.2 0Z" fill="var(--danger)"/></symbol>
+    <symbol id="eye-off" viewBox="0 0 16 16"><path d="M1.3 5.6C3.4 11 12.6 11 14.7 5.6M8 9.7v3.4M4.1 8.9l-1.6 2.5M11.9 8.9l1.6 2.5" fill="none" stroke="var(--faint)" stroke-width="1.4" stroke-linecap="round"/></symbol>
+    <symbol id="eye-btn" viewBox="0 0 16 16"><path d="M1.1 8C3.2 2.8 12.8 2.8 14.9 8 12.8 13.2 3.2 13.2 1.1 8Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="8" cy="8" r="2.5" fill="currentColor"/></symbol>
+  </defs>
+</svg>
 
-  <section id="pairing" hidden>
-    <h2>Pair with oko</h2>
-    <p class="hint">In a terminal run <code>oko ext pair</code> and type the code it prints.</p>
-    <div class="row">
-      <input id="code" placeholder="XXXX-XXXX" autocomplete="off" spellcheck="false" maxlength="12">
-      <button id="pair" class="primary">Pair</button>
-    </div>
-    <label class="small">Bridge port <input id="port" type="number" min="1" max="65535"></label>
-  </section>
+<header>
+  <svg class="eye" id="eye" aria-hidden="true"><use href="#eye-off"/></svg>
+  <span class="name">oko</span>
+  <span id="link" class="state"><i></i><span id="link-label">…</span></span>
+</header>
 
-  <section id="current">
+<div id="untrusted" class="alert" hidden>
+  <b>This bridge is not the one you paired.</b>
+  <span>Pair again with a fresh code from <code>oko ext pair</code>. oko holds no tabs until then.</span>
+</div>
+<p id="error" class="error" hidden></p>
+
+<section id="pairing" hidden>
+  <h2>Pair with oko</h2>
+  <p id="pair-lead" class="lead">In a terminal, run <code>oko ext pair</code> and type the code it prints.</p>
+  <div class="pair">
+    <input id="code" class="code" placeholder="XXXX-XXXX" autocomplete="off" spellcheck="false" maxlength="12" aria-label="Pairing code">
+    <button id="pair" class="primary">Pair</button>
+  </div>
+  <label class="adv">Bridge port <input id="port" type="number" min="1" max="65535"></label>
+</section>
+
+<main>
+  <section id="cur-sec">
     <h2>This tab</h2>
-    <p id="cur-title" class="title"></p>
-    <p id="cur-note" class="hint" hidden></p>
-    <button id="give" class="primary" hidden>Give this tab to oko</button>
-    <button id="release-cur" hidden>Release this tab</button>
+    <div id="cur" class="tab">
+      <div class="tt">
+        <span id="cur-fav" class="fav"></span>
+        <div class="tt-w"><div id="cur-title" class="tt-t"></div><div id="cur-host" class="tt-u"></div></div>
+      </div>
+      <div id="cur-held" class="held-line" hidden><svg aria-hidden="true"><use href="#eye-held"/></svg>oko is driving this tab</div>
+      <p id="cur-note" class="note" hidden></p>
+      <button id="give" class="primary" hidden><svg aria-hidden="true"><use href="#eye-btn"/></svg>Give this tab to oko</button>
+      <button id="release-cur" class="second" hidden>Take it back</button>
+    </div>
   </section>
 
-  <section>
-    <h2>Tabs oko controls <span id="count" class="count"></span></h2>
+  <section id="held-sec">
+    <h2>Tabs oko holds <span id="count" class="n"></span><button id="release-all" class="text act" hidden>Take all back</button></h2>
     <ul id="tabs"></ul>
-    <p id="none" class="hint">None. oko can only drive tabs you give it here.</p>
-    <button id="release-all" hidden>Disconnect all</button>
+    <p id="none" class="empty">None yet.</p>
   </section>
 
-  <section>
-    <label class="check"><input id="allow-new" type="checkbox"> Allow oko to open its own tabs <span class="hint">(they go into an orange “oko” group)</span></label>
+  <section id="new-sec">
+    <label class="sw"><input id="allow-new" type="checkbox"><div><b>Let oko open its own tabs</b><span>They open in an <i class="grp">oko</i> tab group.</span></div></label>
   </section>
+</main>
 
-  <footer>
-    <p class="hint">While oko holds a tab, Chrome shows its “started debugging this browser” bar. It cannot be hidden; pressing Cancel there releases the tab.</p>
-    <button id="repair" class="link">Pair again</button>
-  </footer>
-  <script type="module" src="popup.js"></script>
+<footer>
+  <p id="foot">oko only reaches the tabs you give it here.</p>
+  <button id="repair" class="text" hidden>Pair again</button>
+</footer>
+<script type="module" src="popup.js"></script>
 </body>
 </html>

@@ -147,8 +147,11 @@ func writeExtension() (string, error) {
 		return "", err
 	}
 	err := fs.WalkDir(extension.Files, ".", func(path string, d fs.DirEntry, err error) error {
-		if err != nil || d.IsDir() {
+		if err != nil {
 			return err
+		}
+		if d.IsDir() {
+			return os.MkdirAll(filepath.Join(dir, path), 0o700)
 		}
 		b, err := extension.Files.ReadFile(path)
 		if err != nil {

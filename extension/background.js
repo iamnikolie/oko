@@ -17,7 +17,6 @@ const BRIDGE_METHODS = new Set(policy.bridge);
 
 const DEFAULT_PORT = 47222;
 const PROTOCOL = '1.3';
-const BADGE = '#c2410c';
 
 // tabId -> { own: bool }. Mirrored to storage.session so a restarted worker
 // knows which attachments are its own; cleared when Chrome restarts.
@@ -58,7 +57,7 @@ async function load() {
         if (t && t.attached) controlled.set(tabId, v);
       }
       await save();
-      for (const tabId of controlled.keys()) badge(tabId);
+      for (const tabId of controlled.keys()) paintTab(tabId);
     })();
   }
   return loaded;
@@ -68,16 +67,41 @@ async function save() {
   await chrome.storage.session.set({ tabs: Object.fromEntries(controlled) });
 }
 
-function badge(tabId) {
-  const own = controlled.get(tabId)?.own;
-  chrome.action.setBadgeText({ tabId, text: own ? 'OKO+' : 'OKO' }).catch(() => {});
-  chrome.action.setBadgeBackgroundColor({ tabId, color: BADGE }).catch(() => {});
-  chrome.action.setTitle({ tabId, title: own ? 'oko opened and controls this tab' : 'oko controls this tab' }).catch(() => {});
+// The toolbar eye is the link state: open = connected; half-lidded with a red
+// "!" = bridge not trusted or pairing refused; closed = off or not paired. A tab
+// oko holds shows the filled eye while the link is on. A tab-specific icon
+// cannot be unset, so every tab that ever got one is repainted with the link.
+const EYE = { on: 'on', refused: 'half', untrusted: 'half' }; // else 'off'
+const TITLE = {
+  on: 'oko', connecting: 'oko: connecting', off: 'oko: bridge not running',
+  unpaired: 'oko: not paired', refused: 'oko: pairing refused', untrusted: 'oko: bridge not trusted',
+};
+const DANGER = '#c8322f';
+const eyeIcon = (eye) => ({ 16: `icons/${eye}-16.png`, 32: `icons/${eye}-32.png`, 48: `icons/${eye}-48.png` });
+const painted = new Set(); // tabs with a tab-specific icon and title
+let paintedLink = '';
+
+function paint() {
+  if (link === paintedLink) return;
+  paintedLink = link;
+  const eye = EYE[link] || 'off';
+  chrome.action.setIcon({ path: eyeIcon(eye) }).catch(() => {});
+  chrome.action.setBadgeText({ text: eye === 'half' ? '!' : '' }).catch(() => {});
+  chrome.action.setBadgeBackgroundColor({ color: DANGER }).catch(() => {});
+  chrome.action.setTitle({ title: TITLE[link] || 'oko' }).catch(() => {});
+  for (const tabId of painted) paintTab(tabId);
 }
 
-function unbadge(tabId) {
-  chrome.action.setBadgeText({ tabId, text: '' }).catch(() => {});
-  chrome.action.setTitle({ tabId, title: 'oko' }).catch(() => {});
+function paintTab(tabId) {
+  painted.add(tabId);
+  const t = controlled.get(tabId);
+  if (t && link === 'on') {
+    chrome.action.setIcon({ tabId, path: eyeIcon('held') }).catch(() => {});
+    chrome.action.setTitle({ tabId, title: t.own ? 'oko opened and controls this tab' : 'oko controls this tab' }).catch(() => {});
+  } else {
+    chrome.action.setIcon({ tabId, path: eyeIcon(EYE[link] || 'off') }).catch(() => {});
+    chrome.action.setTitle({ tabId, title: TITLE[link] || 'oko' }).catch(() => {});
+  }
 }
 
 function attachError(e) {
@@ -108,7 +132,7 @@ export async function giveTab(tabId, own = false) {
   controlled.set(tabId, { own });
   lastRelease.delete(tabId);
   await save();
-  badge(tabId);
+  paintTab(tabId);
   pushTabs();
 }
 
@@ -120,7 +144,7 @@ export async function releaseTab(tabId, reason = 'released in the popup') {
   lastRelease.set(tabId, reason);
   await save();
   try { await chrome.debugger.detach({ tabId }); } catch { /* already gone */ }
-  unbadge(tabId);
+  paintTab(tabId);
   pushTabs();
 }
 
@@ -181,6 +205,7 @@ async function connect() {
   const { key, port } = await settings();
   if (!key) {
     link = 'unpaired';
+    paint();
     return;
   }
   open(port, 'hello');
@@ -191,6 +216,7 @@ async function connect() {
 function distrust(sock, reason) {
   if (ws === sock) ws = null;
   link = 'untrusted';
+  paint();
   linkError = reason;
   try { sock.close(); } catch { /* */ }
   pairWaiter?.reject(new Error(reason));
@@ -201,6 +227,7 @@ function trust(sock, ch) {
   trustedSock = sock;
   trustedCh = ch;
   link = 'on';
+  paint();
   linkError = '';
   retryMs = 1000;
   clearInterval(pingTimer);
@@ -253,6 +280,7 @@ async function handshake(sock, st, m) {
     case 'refused':
       if (ws === sock) ws = null;
       link = 'refused';
+      paint();
       linkError = m.reason || 'refused';
       try { sock.close(); } catch { /* */ }
       pairWaiter?.reject(new Error(linkError));
@@ -264,6 +292,7 @@ async function handshake(sock, st, m) {
 
 function open(port, mode, code = '') {
   link = 'connecting';
+  paint();
   const sock = new WebSocket(`ws://127.0.0.1:${port}/ext`);
   ws = sock;
   const st = { mode, code, nonce: randomHex(16), proved: false };
@@ -298,6 +327,7 @@ function open(port, mode, code = '') {
       }
       if (m.type === 'refused') {
         link = 'refused';
+        paint();
         linkError = m.reason || 'refused';
         try { sock.close(); } catch { /* */ }
         return;
@@ -316,6 +346,7 @@ function open(port, mode, code = '') {
     clearInterval(pingTimer);
     if (link === 'refused' || link === 'untrusted') return;
     link = 'off';
+    paint();
     if (pairWaiter) pairWaiter.reject(new Error(`no oko bridge on 127.0.0.1:${port}: run 'oko ext pair' first`));
     pairWaiter = null;
     // While a tab is held the worker stays alive: come back quickly when
@@ -456,11 +487,12 @@ chrome.debugger.onDetach.addListener((source, reason) => {
   children.delete(tabId);
   lastRelease.set(tabId, reason === 'canceled_by_user' ? 'debugging cancelled in Chrome’s bar' : reason);
   save();
-  unbadge(tabId);
+  paintTab(tabId);
   pushTabs();
 });
 
 chrome.tabs.onRemoved.addListener((tabId) => {
+  painted.delete(tabId);
   if (!controlled.has(tabId)) return;
   controlled.delete(tabId);
   children.delete(tabId);
@@ -475,7 +507,7 @@ chrome.tabs.onUpdated.addListener((tabId, change) => {
     return;
   }
   if (change.url || change.title || change.status === 'complete') {
-    badge(tabId);
+    paintTab(tabId);
     pushTabs();
   }
 });
@@ -496,6 +528,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, respond) => {
   return true;
 });
 
+paint();
 chrome.alarms.create('oko-connect', { periodInMinutes: 0.5 });
 chrome.alarms.onAlarm.addListener((a) => { if (a.name === 'oko-connect') connect(); });
 chrome.runtime.onStartup.addListener(() => connect());

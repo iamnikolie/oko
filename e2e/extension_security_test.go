@@ -363,6 +363,10 @@ func TestExtensionRelay(t *testing.T) {
 			if !strings.Contains(st.LinkError, "failed authentication") {
 				t.Fatalf("state %+v", st)
 			}
+			// The toolbar shows the dropped session: red "!" and its title.
+			if got := h.mustJS(`chrome.action.getBadgeText({}).then(async (b) => b + "|" + await chrome.action.getTitle({}))`); got != `"!|oko: bridge not trusted"` {
+				t.Fatalf("toolbar after a failed frame: %s", got)
+			}
 			time.Sleep(500 * time.Millisecond)
 			if got := title(); got != before || got == "relayed" {
 				t.Fatalf("the injected command ran: title %q", got)

@@ -275,6 +275,9 @@ func TestExtensionProfile(t *testing.T) {
 	// Hand over a tab: the main commands work on it unchanged.
 	form := h.openTab(base + "/form.html")
 	h.mustJS(fmt.Sprintf("oko.giveTab(%d)", form))
+	if got := h.mustJS(fmt.Sprintf(`Promise.all([chrome.action.getTitle({tabId: %d}), chrome.action.getBadgeText({}), chrome.action.getTitle({})]).then((v) => v.join("|"))`, form)); got != `"oko controls this tab||oko"` {
+		t.Fatalf("toolbar for a held tab: %s", got)
+	}
 	waitFor(t, func() bool { return strings.Contains(oko(t, "ext", "status"), "tabs handed to oko: 1") })
 	tabs := oko(t, "-p", "mine", "tabs")
 	must(t, tabs, "Form")
