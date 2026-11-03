@@ -50,6 +50,10 @@ type State struct {
 	// Idle is how long the browser may go without an oko command before it
 	// is closed: a duration ("30m"), "off", or empty for DefaultIdle.
 	Idle string `json:"idle,omitempty"`
+	// Extension makes this profile drive the user's own Chrome through the
+	// oko extension and its local bridge instead of a Chrome oko launches
+	// ('oko ext pair' sets it).
+	Extension bool `json:"extension,omitempty"`
 }
 
 // DefaultIdle closes a browser nobody has driven for this long. Logins stay

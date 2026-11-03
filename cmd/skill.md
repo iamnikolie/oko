@@ -277,6 +277,34 @@ oko status | up [--headless] [--lang en-US] [--proxy URL] [--idle 30m|off] | dow
   prints the upstream's answer (e.g. `407`).
 - `--json` on most commands for structured output; `--timeout 60s` for slow pages.
 
+## The user's own Chrome (extension profile)
+
+Since Chrome 136 the everyday Chrome profile cannot open a debugging port, so
+oko cannot attach to it directly. The oko extension can, tab by tab: the user
+hands a tab over in the extension popup, and an extension profile (`-p mine`)
+drives exactly those tabs through a local bridge on 127.0.0.1.
+
+```sh
+oko ext pair             # once: prints a code + the folder to "Load unpacked"; user types the code in the popup
+oko -p mine tabs         # only the tabs the user handed over
+oko -p mine snap         # every per-tab command works as usual: open, snap, read, text, html, shot, eval,
+                         #   click, fill, type, press, hover, scroll, upload, wait, tab, close, console, net, perf, record
+oko ext status           # bridge, pairing, link, handed-over tabs
+oko ext release          # give every tab back;  oko ext unpair / oko ext stop
+```
+
+- oko sees and drives only handed-over tabs. With none, commands fail with
+  "no tab is handed to oko": ask the user to click the oko icon on the tab and
+  press "Give this tab to oko". Never ask them to hand over banking or email.
+- `open --new`, `revive` and other new-tab paths need the popup's opt-in
+  "Allow oko to open its own tabs"; such tabs go into an orange "oko" group.
+- Refused on an extension profile, with a reason: `window`, `viewport`, the
+  element picker (`pick`, `picks`, `watch`), `up --headless/--proxy/--lang/--idle`.
+  `down` releases every tab and stops the bridge; it never closes the user's Chrome.
+- Chrome's own pages (chrome://, the Web Store, other extensions) cannot be
+  handed over or navigated to. Chrome shows a "started debugging this browser"
+  bar while a tab is held; pressing Cancel there releases the tab.
+
 ## Gotchas
 
 - `snap` is the source of truth for refs; refs from an old page fail with a

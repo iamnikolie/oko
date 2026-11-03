@@ -1,4 +1,4 @@
-.PHONY: build install uninstall test vet fmt clean e2e skill
+.PHONY: build install uninstall test vet fmt lint clean e2e skill
 
 BIN := oko
 PREFIX ?= $(HOME)/.local
@@ -43,6 +43,10 @@ vet:
 
 fmt:
 	gofmt -l -w .
+
+# gofmt must have nothing to change, and go vet must pass.
+lint: vet
+	@out=$$(gofmt -l .); if [ -n "$$out" ]; then echo "gofmt needed:"; echo "$$out"; exit 1; fi
 
 clean:
 	rm -f $(BIN)

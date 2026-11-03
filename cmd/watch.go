@@ -51,6 +51,9 @@ func watchPID(p *chrome.Profile) int {
 func ensureWatch(p *chrome.Profile, wait bool) error {
 	// Headless has nobody to pick; OKO_WATCH=1 forces it (tests).
 	force := os.Getenv("OKO_WATCH") == "1"
+	if p.State.Extension {
+		return errExtUnsupported("the element picker")
+	}
 	if p.State.NoWatch || os.Getenv("OKO_WATCH") == "0" || p.State.Headless && !force {
 		return errors.New("watcher disabled for this profile ('oko watch on' enables it)")
 	}

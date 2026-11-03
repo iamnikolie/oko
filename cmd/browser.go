@@ -35,6 +35,18 @@ var upCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		if p.State.Extension {
+			c, err := extClient()
+			if err != nil {
+				return err
+			}
+			st, err := readyExtension(ctx, c, p)
+			if err != nil {
+				return err
+			}
+			printExtStatus(st, p.Name)
+			return nil
+		}
 		if cmd.Flags().Changed("human") {
 			p.State.Human = humanFlag
 			_ = p.Save()
@@ -156,6 +168,19 @@ var statusCmd = &cobra.Command{
 		p, err := chrome.Load(profileName)
 		if err != nil {
 			return err
+		}
+		if p.State.Extension {
+			c, err := extClient()
+			if err != nil {
+				return err
+			}
+			st, err := c.Status(ctx)
+			if err != nil {
+				fmt.Fprintf(stdout, "profile %s: your Chrome via the oko extension; bridge not running (any command starts it)\n", p.Name)
+				return nil
+			}
+			printExtStatus(st, p.Name)
+			return nil
 		}
 		_, err = p.Endpoint(ctx)
 		running := err == nil

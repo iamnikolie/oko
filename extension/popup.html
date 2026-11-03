@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>oko</title>
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <span class="name">oko</span>
+    <span id="link" class="pill">…</span>
+  </header>
+  <p id="error" class="error" hidden></p>
+
+  <section id="pairing" hidden>
+    <h2>Pair with oko</h2>
+    <p class="hint">In a terminal run <code>oko ext pair</code> and type the code it prints.</p>
+    <div class="row">
+      <input id="code" placeholder="XXXX-XXXX" autocomplete="off" spellcheck="false" maxlength="12">
+      <button id="pair" class="primary">Pair</button>
+    </div>
+    <label class="small">Bridge port <input id="port" type="number" min="1" max="65535"></label>
+  </section>
+
+  <section id="current">
+    <h2>This tab</h2>
+    <p id="cur-title" class="title"></p>
+    <p id="cur-note" class="hint" hidden></p>
+    <button id="give" class="primary" hidden>Give this tab to oko</button>
+    <button id="release-cur" hidden>Release this tab</button>
+  </section>
+
+  <section>
+    <h2>Tabs oko controls <span id="count" class="count"></span></h2>
+    <ul id="tabs"></ul>
+    <p id="none" class="hint">None. oko can only drive tabs you give it here.</p>
+    <button id="release-all" hidden>Disconnect all</button>
+  </section>
+
+  <section>
+    <label class="check"><input id="allow-new" type="checkbox"> Allow oko to open its own tabs <span class="hint">(they go into an orange “oko” group)</span></label>
+  </section>
+
+  <footer>
+    <p class="hint">While oko holds a tab, Chrome shows its “started debugging this browser” bar. It cannot be hidden; pressing Cancel there releases the tab.</p>
+    <button id="repair" class="link">Pair again</button>
+  </footer>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

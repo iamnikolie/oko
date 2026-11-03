@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/go-rod/rod"
+	"github.com/go-rod/rod/lib/cdp"
 	"github.com/go-rod/rod/lib/proto"
 	"github.com/iamnikolie/oko/internal/chrome"
 )
@@ -46,6 +47,9 @@ func connect(ctx context.Context, launch bool) (*session, error) {
 	p, err := chrome.Load(profileName)
 	if err != nil {
 		return nil, err
+	}
+	if p.State.Extension {
+		return connectExtension(ctx, p)
 	}
 	ws, err := p.Endpoint(ctx)
 	if err != nil && p.PID() != 0 {
@@ -92,6 +96,14 @@ func run(fn func(s *session) error) error {
 	err = fn(s)
 	s.flushNotes()
 	s.record()
+	if s.prof.State.Extension {
+		// The bridge's refusals are sentences meant for the user; print them
+		// without rod's {code message data} wrapping.
+		var ce *cdp.Error
+		if errors.As(err, &ce) {
+			err = errors.New(ce.Message)
+		}
+	}
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return fmt.Errorf("timed out after %s (raise --timeout if the page is slow)", timeout)
 	}

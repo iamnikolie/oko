@@ -40,7 +40,8 @@ func reapPID(p *chrome.Profile) int {
 // used marks the browser as driven and makes sure a reaper watches it.
 func used(p *chrome.Profile) {
 	p.Touch()
-	if p.IdleTTL() == 0 || reapPID(p) != 0 {
+	// The user's own Chrome is never closed for being idle.
+	if p.State.Extension || p.IdleTTL() == 0 || reapPID(p) != 0 {
 		return
 	}
 	self, err := os.Executable()
@@ -57,6 +58,9 @@ func used(p *chrome.Profile) {
 // stopBrowser closes the profile's Chrome and the processes riding along
 // with it. It reports false when Chrome was not running.
 func stopBrowser(ctx context.Context, p *chrome.Profile) (bool, error) {
+	if p.State.Extension {
+		return stopExtension(ctx)
+	}
 	pid := p.PID()
 	if ws, err := p.Endpoint(ctx); err == nil {
 		b := rod.New().ControlURL(ws).Context(ctx)

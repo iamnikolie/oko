@@ -37,11 +37,25 @@ to have picks arrive with your next message by themselves.
 `oko skill` prints the full agent reference (also installed as a Claude Code /
 Codex skill).
 
+## Your own Chrome (extension)
+
+Since Chrome 136 the everyday Chrome profile cannot be started with a debugging
+port. The oko extension (MV3, in [`extension/`](extension/), embedded in the
+binary) closes that gap: you hand a tab over in its popup, and `oko -p mine …`
+drives that tab through a bridge on 127.0.0.1 — the same commands, your logins.
+oko only ever sees tabs you handed over; opening its own tabs is an opt-in.
+Pairing is a one-time code (`oko ext pair`); the bridge refuses unknown
+extensions, browser origins and callers without the local secret. Setup and
+rollback: [extension/INSTALL.md](extension/INSTALL.md).
+
 ## Tests
 
 ```sh
 make e2e                 # real binary vs headless Chrome and fixture pages (~20 s)
 ```
+
+The extension case loads the unpacked extension into a throwaway Chrome through
+CDP `Extensions.loadUnpacked` (`$OKO_EXT_CHROME` picks another browser).
 
 ## Install
 

@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "oko",
+  "version": "0.1.0",
+  "description": "Lets the oko CLI drive the tabs you hand over, through a bridge on 127.0.0.1. Local only.",
+  "minimum_chrome_version": "125",
+  "permissions": ["debugger", "tabs", "storage", "alarms", "tabGroups"],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "background": { "service_worker": "background.js", "type": "module" },
+  "action": { "default_popup": "popup.html", "default_title": "oko" }
+}

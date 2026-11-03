@@ -1,0 +1,32 @@
+:root {
+  --ink: #1c1917; --muted: #78716c; --line: #e7e5e4; --bg: #fafaf9; --accent: #c2410c; --bad: #b91c1c;
+  font: 13px/1.4 -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif; color: var(--ink);
+}
+body { width: 340px; margin: 0; padding: 14px 16px 12px; background: var(--bg); }
+header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.name { font: 600 15px/1 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .02em; }
+.pill { font: 11px/1 ui-monospace, Menlo, monospace; padding: 4px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.pill.on { color: #166534; border-color: #bbf7d0; background: #f0fdf4; }
+.pill.bad { color: var(--bad); border-color: #fecaca; background: #fef2f2; }
+section { border-top: 1px solid var(--line); padding: 10px 0; }
+h2 { font: 11px/1 ui-monospace, Menlo, monospace; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 8px; font-weight: 500; }
+.count { color: var(--accent); }
+.title { margin: 0 0 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hint { color: var(--muted); font-size: 12px; margin: 0 0 8px; }
+.error { color: var(--bad); margin: 0 0 8px; font-size: 12px; }
+button { font: inherit; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--line); background: #fff; color: var(--ink); cursor: pointer; }
+button:hover { border-color: #d6d3d1; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.link { border: 0; background: none; padding: 0; color: var(--muted); text-decoration: underline; font-size: 12px; }
+ul { list-style: none; margin: 0 0 8px; padding: 0; }
+li { display: flex; align-items: center; gap: 8px; padding: 5px 0; }
+li .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+li .own { font: 10px/1 ui-monospace, Menlo, monospace; color: var(--accent); }
+li button { padding: 3px 8px; font-size: 12px; }
+.row { display: flex; gap: 8px; margin-bottom: 8px; }
+input#code { flex: 1; font: 14px ui-monospace, Menlo, monospace; letter-spacing: .08em; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; text-transform: uppercase; }
+input#port { width: 70px; margin-left: 6px; padding: 2px 4px; }
+.small { color: var(--muted); font-size: 12px; }
+.check { display: block; }
+code { font: 12px ui-monospace, Menlo, monospace; background: #f5f5f4; padding: 1px 4px; border-radius: 4px; }
+footer { border-top: 1px solid var(--line); padding-top: 8px; }
