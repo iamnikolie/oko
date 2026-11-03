@@ -213,6 +213,36 @@ func TestExtensionReleaseReconnect(t *testing.T) {
 	if attached() {
 		t.Fatal("Disconnect all left the debugger attached")
 	}
+
+	// A failing storage write neither keeps the debugger on a released tab nor
+	// stops releaseAll half-way.
+	other := h.openTab(base + "/article.html")
+	h.mustJS(fmt.Sprintf("oko.giveTab(%d)", tab))
+	h.mustJS(fmt.Sprintf("oko.giveTab(%d)", other))
+	h.mustJS(`(async () => {
+		const set = chrome.storage.session.set;
+		chrome.storage.session.set = () => Promise.reject(new Error('storage down'));
+		try { await oko.releaseAll(); } finally { chrome.storage.session.set = set; }
+	})()`)
+	if got := h.mustJS(fmt.Sprintf(`(async()=>(await chrome.debugger.getTargets()).filter(t=>t.attached&&(t.tabId===%d||t.tabId===%d)).length)()`, tab, other)); got != "0" {
+		t.Fatalf("releaseAll with failing storage left %s tabs attached", got)
+	}
+
+	// A tab that oko asked for and that opens across a closed link is not
+	// held after it.
+	h.mustJS("oko.setAllowNew(true)")
+	res := h.mustJS(`(async () => {
+		const create = chrome.tabs.create;
+		chrome.tabs.create = async (o) => { const t = await create(o); await oko._dropAll(); return t; };
+		let err = '';
+		try { await oko._op({ op: 'createTab', url: 'about:blank', background: true }); } catch (e) { err = e.message; } finally { chrome.tabs.create = create; }
+		const att = (await chrome.debugger.getTargets()).filter((t) => t.attached && t.type === 'page').length;
+		return err + '|' + att + '|' + (await oko.state()).tabs.length;
+	})()`)
+	if res != `"the link closed while the tab was opening|0|0"` {
+		t.Fatalf("createTab across a closed link: %s", res)
+	}
+	h.mustJS("oko.setAllowNew(false)")
 	h.mustJS(fmt.Sprintf("oko.giveTab(%d)", tab))
 	if err := c.Stop(context.Background()); err != nil {
 		t.Fatal(err)

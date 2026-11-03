@@ -142,15 +142,20 @@ export async function releaseTab(tabId, reason = 'taken back in the popup') {
   controlled.delete(tabId);
   children.delete(tabId);
   lastRelease.set(tabId, reason);
-  await save();
+  // Detach first: a failed storage write must not leave the debugger on a tab
+  // oko no longer tracks. A stale stored entry is harmless, since load() keeps
+  // only tabs that are still attached.
   try { await chrome.debugger.detach({ tabId }); } catch { /* already gone */ }
   paintTab(tabId);
   pushTabs();
+  try { await save(); } catch { /* see above */ }
 }
 
+// releaseAll lets go of every tab, each on its own: one failure does not keep
+// the rest held.
 export async function releaseAll(reason = 'taken back with "Take all back"') {
   await load();
-  for (const tabId of [...controlled.keys()]) await releaseTab(tabId, reason);
+  await Promise.allSettled([...controlled.keys()].map((tabId) => releaseTab(tabId, reason)));
 }
 
 export async function setAllowNew(on) {
@@ -215,8 +220,10 @@ async function connect() {
 // nothing until the user gives a tab again.
 const DROP_REASON = 'the link failed a security check';
 let dropped = 0; // tabs the last closed link let go of
+let drops = 0; // closed links so far; a tab op started before one must not hold a tab after it
 
 async function dropAll() {
+  drops++;
   await load();
   dropped = controlled.size;
   await releaseAll(DROP_REASON);
@@ -433,6 +440,7 @@ async function op(m) {
       return chrome.debugger.sendCommand(target, m.method, m.params || {});
     }
     case 'createTab': {
+      const gen = drops;
       const { allowNew } = await settings();
       if (!allowNew) throw new Error('oko may not open tabs: enable it in the oko popup');
       const url = m.url || 'about:blank';
@@ -450,6 +458,11 @@ async function op(m) {
         await chrome.tabGroups.update(group, { title: 'oko', color: 'orange' });
       } catch { /* groups are cosmetic */ }
       await giveTab(tab.id, true);
+      if (drops !== gen) {
+        // The link closed while the tab was opening: oko holds nothing now.
+        await releaseTab(tab.id, DROP_REASON);
+        throw new Error('the link closed while the tab was opening');
+      }
       const t = (await tabList()).find((x) => x.tabId === tab.id);
       return t;
     }
@@ -547,6 +560,6 @@ chrome.runtime.onStartup.addListener(() => connect());
 chrome.runtime.onInstalled.addListener(() => connect());
 
 // For the e2e harness (a throwaway Chrome evaluates in this worker).
-globalThis.oko = { giveTab, releaseTab, releaseAll, setAllowNew, setPort, pair, state, connect, _op: op, _channel: channel };
+globalThis.oko = { giveTab, releaseTab, releaseAll, setAllowNew, setPort, pair, state, connect, _op: op, _channel: channel, _dropAll: dropAll };
 
 load().then(connect);
