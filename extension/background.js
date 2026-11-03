@@ -211,6 +211,17 @@ async function connect() {
   open(port, 'hello');
 }
 
+// A closed link lets go of every tab: after a failed security check oko holds
+// nothing until the user gives a tab again.
+const DROP_REASON = 'the link failed a security check';
+let dropped = 0; // tabs the last closed link let go of
+
+async function dropAll() {
+  await load();
+  dropped = controlled.size;
+  await releaseAll(DROP_REASON);
+}
+
 // distrust drops a socket whose peer failed to prove itself; nothing was sent
 // to it but nonces and public keys.
 function distrust(sock, reason) {
@@ -221,6 +232,7 @@ function distrust(sock, reason) {
   try { sock.close(); } catch { /* */ }
   pairWaiter?.reject(new Error(reason));
   pairWaiter = null;
+  dropAll().catch(() => { /* tabs already gone */ });
 }
 
 function trust(sock, ch) {
@@ -464,7 +476,7 @@ export async function state() {
   return {
     link, linkError, paired: !!s.key, port: s.port, allowNew: s.allowNew,
     tabs: await tabList(),
-    released: Object.fromEntries(lastRelease),
+    released: Object.fromEntries(lastRelease), dropped,
   };
 }
 

@@ -21,8 +21,10 @@ the extension talks only to `127.0.0.1`.
   cannot be hidden.
 - The toolbar eye is the link state: open with an orange pupil = connected;
   closed = the bridge is not running or the extension is not paired;
-  half-lidded red with a `!` = the bridge failed a check or pairing was
-  refused (open the popup; pair again with a fresh code).
+  half-lidded red with a `!` = the link closed because the bridge failed a
+  security check, or pairing was refused. A closed link lets go of every tab;
+  the extension reconnects by itself, then give the tabs again. If it keeps
+  happening, pair again with a fresh code.
 - Then any command with `-p mine`: `oko -p mine snap`, `oko -p mine click e12`, …
 - oko sees only the tabs you gave it. To let it open tabs of its own, turn on
   **Let oko open its own tabs** in the popup; those tabs land in an orange
@@ -62,6 +64,8 @@ circular arrow on its card). Extension 0.2 pairs differently from 0.1: run
   key for that connection and direction. A program that relays a genuine
   handshake cannot add, change, replay or reorder a message: the first one
   that does not check out ends the connection.
+- When the connection ends on a failed check, the extension also detaches from
+  every tab it held: oko holds nothing until you give a tab again.
 - Pairing: the code (10 minutes, one use, 5 attempts) is never sent either;
   each side proves it with an HMAC keyed by PBKDF2(code).
 - The bridge listens on `127.0.0.1` only (`$OKO_EXT_PORT`, default 47222) and

@@ -304,9 +304,10 @@ oko ext release          # give every tab back;  oko ext unpair / oko ext stop
   no cookies, storage or other tabs; `open` takes http(s) and about:blank.
 - "link closed" in the popup (half-lidded red eye with `!` on the toolbar):
   the bridge failed a security check, in the handshake (something else on the
-  port cannot prove the pairing) or on a message. Only the link closes; the
-  pairing and the handed-over tabs stay, and the extension reconnects on its
-  own. If it repeats, stop whatever holds the port (or move it) and pair again.
+  port cannot prove the pairing) or on a message. The extension lets go of
+  every handed-over tab and reconnects on its own with the same pairing; ask
+  the user to give the tabs again once it is back. If it repeats, stop
+  whatever holds the port (or move it) and pair again.
   `down` releases every tab and stops the bridge; it never closes the user's Chrome.
 - Chrome's own pages (chrome://, the Web Store, other extensions) cannot be
   handed over or navigated to. Chrome shows a "started debugging this browser"

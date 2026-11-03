@@ -382,6 +382,21 @@ func TestExtensionRelay(t *testing.T) {
 				}
 				break
 			}
+			// A closed link lets go of every tab: the debugger is off the
+			// handed tab and oko holds nothing until the user gives one again.
+			attached := func() bool {
+				return h.mustJS(fmt.Sprintf(`(async()=>{const t=(await chrome.debugger.getTargets()).find(t=>t.tabId===%d);return !!t?.attached})()`, tab)) == "true"
+			}
+			waitFor(t, func() bool { return !attached() })
+			var after struct {
+				Tabs     []json.RawMessage `json:"tabs"`
+				Dropped  int               `json:"dropped"`
+				Released map[string]string `json:"released"`
+			}
+			_ = json.Unmarshal([]byte(h.mustJS("oko.state()")), &after)
+			if len(after.Tabs) != 0 || after.Dropped != 1 || after.Released[strconv.Itoa(tab)] != "the link failed a security check" {
+				t.Fatalf("tabs after a failed frame: %+v", after)
+			}
 		})
 	}
 }

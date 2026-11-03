@@ -75,7 +75,7 @@ function render(s) {
   const untrusted = s.link === 'untrusted';
   $('untrusted').hidden = !untrusted;
   if (s.link === 'refused' && s.linkError) showError(s.linkError);
-  $('untrusted-held').hidden = !(untrusted && s.tabs.length);
+  $('untrusted-held').hidden = !(untrusted && s.dropped);
   const dropped = untrusted ? (s.linkError || '').replace(/^bridge not trusted:\s*/, '') : '';
   $('untrusted-why').textContent = dropped;
   $('untrusted-why').hidden = !dropped;
