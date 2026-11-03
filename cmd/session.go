@@ -104,7 +104,9 @@ func run(fn func(s *session) error) error {
 			err = errors.New(ce.Message)
 		}
 	}
-	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) {
+	// Only a failed command timed out: one that finished its work after the
+	// deadline (e.g. record stop encoding a long GIF) succeeded.
+	if err != nil && (errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded)) {
 		return fmt.Errorf("timed out after %s (raise --timeout if the page is slow)", timeout)
 	}
 	return err
