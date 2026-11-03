@@ -1,17 +1,22 @@
-# oko extension — install, use, remove
+# oko extension — install, use, build, remove
 
-Lets oko drive tabs of your everyday Chrome. Local only: nothing is published,
-the extension talks only to `127.0.0.1`.
+Lets oko drive tabs of your everyday Chrome. Local only: the extension is not
+in the Chrome Web Store, it ships inside the oko binary, and it talks only to
+`127.0.0.1`.
 
 ## Install and pair (once)
 
-1. Build/install oko from this checkout: `make install`.
-2. Run `oko ext pair`. It prints a code (valid 10 minutes, works once) and a
-   folder, `~/.oko/extension/unpacked`.
+1. Install oko (Homebrew, a release binary or `make install`; see the
+   [README](../README.md#install)). Chrome 125 or newer.
+2. Run `oko ext pair`. It writes the extension to
+   `~/.oko/extension/unpacked`, starts the bridge, prints a code (valid 10
+   minutes, works once) and waits.
 3. Chrome → `chrome://extensions` → turn on **Developer mode** → **Load unpacked**
-   → pick that folder. Pin the oko icon if you like.
-4. Click the oko icon, type the code, press **Pair**. `oko ext pair` prints
-   `paired:` and exits.
+   → pick `~/.oko/extension/unpacked` (in the macOS file dialog press
+   Cmd+Shift+. to see the hidden `.oko` folder, or Cmd+Shift+G and paste the
+   path). Pin the oko eye from the puzzle-piece menu.
+4. Click the oko eye, type the code, press **Pair**. `oko ext pair` prints
+   `paired:` and exits; the eye opens.
 
 ## Use
 
@@ -49,9 +54,51 @@ the extension talks only to `127.0.0.1`.
 
 ## Updating
 
-After an update of oko, reload the extension in `chrome://extensions` (the
-circular arrow on its card). Extension 0.2 pairs differently from 0.1: run
-`oko ext pair` once more and type the new code.
+1. Update oko (`brew upgrade oko`, a new release binary, or `make install`).
+2. `oko ext path` writes the new extension files over
+   `~/.oko/extension/unpacked`.
+3. `chrome://extensions` → the oko card → the circular reload arrow. Do not
+   skip it: Chrome reads the popup from disk each time it opens, but keeps the
+   old service worker and toolbar icon until the reload, so the two halves
+   disagree. The card shows the new version once it took.
+4. Only when the pairing protocol changed (0.1 → 0.2): the popup says "pairing
+   refused"; run `oko ext pair` and type the new code.
+
+## Build and develop
+
+The extension is plain JavaScript with no build step (MV3, ES modules):
+`manifest.json`, `background.js` (service worker: pairing, the authenticated
+link to the bridge, `chrome.debugger` per handed-over tab, toolbar icon),
+`protocol.js` (HMAC/ECDH/channel), `cdp-policy.json` (the CDP allow-list, also
+read by the bridge), `popup.*`, `restricted.js`, `icons/`. `embed.go` embeds
+these files in the oko binary; the bridge side is `internal/bridge`, the CLI
+side `cmd/ext.go`.
+
+```sh
+make build                    # go build: the binary carries the extension
+./oko ext path                # write it to ~/.oko/extension/unpacked
+# chrome://extensions → reload the oko card (or Load unpacked the first time)
+make lint test                # go vet + unit tests
+go test ./e2e -run '^TestExtension' -count=1 -v   # real Chrome, see below
+```
+
+A new file under `extension/` must also be listed in the `go:embed` line of
+`embed.go`. A new CDP method a command needs goes into `cdp-policy.json`
+(`client` for oko commands, `bridge` for the bridge's own calls), never as a
+wildcard. Bump `version` in `manifest.json` when the extension's behaviour
+changes; `chrome://extensions` and `oko ext status` show it.
+
+The e2e tests load the unpacked extension into a throwaway headless Chrome
+with a temporary profile (`--use-mock-keychain --password-store=basic`, so
+the macOS keychain is never touched), pair it with a bridge on a free port and
+drive it: real commands on handed-over tabs, the CDP boundary, impersonation
+and relayed-frame attacks, release paths. `$OKO_EXT_CHROME` picks another
+Chrome binary.
+
+To look at the popup without Chrome APIs, open `popup.html` over a local HTTP
+server with a stub `chrome` object (`chrome.runtime.sendMessage` resolving to
+`{ ok: true, state }` and `chrome.tabs.query`); the shape of `state` is
+`state()` in `background.js`.
 
 ## How it is guarded
 

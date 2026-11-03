@@ -46,8 +46,21 @@ drives that tab through a bridge on 127.0.0.1 — the same commands, your logins
 oko only ever sees tabs you handed over; opening its own tabs is an opt-in.
 Pairing is a one-time code (`oko ext pair`); after that the extension, the
 bridge and oko commands authenticate each other on every connection without
-sending a secret, and only page-level CDP methods reach a tab. Setup and
-rollback: [extension/INSTALL.md](extension/INSTALL.md).
+sending a secret, and only page-level CDP methods reach a tab. The toolbar eye
+shows the link: open = connected, filled orange = this tab is oko's, closed =
+off, half-lidded red = the link failed a security check (oko then lets go of
+every tab).
+
+The extension is not in the Web Store: it is inside the oko binary.
+
+```sh
+oko ext pair     # writes ~/.oko/extension/unpacked, prints a one-time code
+# chrome://extensions → Developer mode → Load unpacked → that folder
+# oko eye → type the code → Pair; then on a tab: "Give this tab to oko"
+oko -p mine snap
+```
+
+Install, update, build and rollback: [extension/INSTALL.md](extension/INSTALL.md).
 
 ## Tests
 
