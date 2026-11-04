@@ -2,10 +2,10 @@
 
 BIN := oko
 PREFIX ?= $(HOME)/.local
-# Local agent-config installer (agentic-os, on PATH as imn-ao) that fans
+# Local agent-config installer (trafaret over the personal agentic-os config) that fans
 # cmd/skill.md out to every harness's skills dir. Absent on other machines —
 # `make skill` then does nothing.
-AO ?= imn-ao
+AO ?= trafaret --config $(HOME)/development/iamnikolie/agentic-os
 PKG := github.com/iamnikolie/oko/cmd
 
 # Version stamped into the binary. Falls back to the short commit when the tree
