@@ -48,7 +48,8 @@ type State struct {
 	// NoWatch keeps the element-picker watcher from starting with the browser.
 	NoWatch bool `json:"no_watch,omitempty"`
 	// Idle is how long the browser may go without an oko command before it
-	// is closed: a duration ("30m"), "off", or empty for DefaultIdle.
+	// is closed: a duration ("30m"), "off", or empty for $OKO_IDLE, else
+	// DefaultIdle.
 	Idle string `json:"idle,omitempty"`
 	// Extension makes this profile drive the user's own Chrome through the
 	// oko extension and its local bridge instead of a Chrome oko launches
@@ -58,21 +59,34 @@ type State struct {
 
 // DefaultIdle closes a browser nobody has driven for this long. Logins stay
 // in the profile and the next command starts it again.
-const DefaultIdle = time.Hour
+const DefaultIdle = 30 * time.Minute
 
-// IdleTTL is the profile's idle limit; 0 means never close.
+// IdleTTL is the profile's idle limit; 0 means never close. A limit set with
+// 'oko up --idle' wins over $OKO_IDLE, which wins over DefaultIdle.
 func (p *Profile) IdleTTL() time.Duration {
-	switch p.State.Idle {
+	if d, ok := ParseIdle(p.State.Idle); ok {
+		return d
+	}
+	if d, ok := ParseIdle(os.Getenv("OKO_IDLE")); ok {
+		return d
+	}
+	return DefaultIdle
+}
+
+// ParseIdle reads an idle limit: a positive duration, or "off"/"0" for
+// never (0). ok is false for empty or malformed values.
+func ParseIdle(v string) (time.Duration, bool) {
+	switch v = strings.TrimSpace(v); v {
 	case "":
-		return DefaultIdle
+		return 0, false
 	case "off", "0":
-		return 0
+		return 0, true
 	}
-	d, err := time.ParseDuration(p.State.Idle)
-	if err != nil || d < 0 {
-		return DefaultIdle
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return 0, false
 	}
-	return d
+	return d, true
 }
 
 func (p *Profile) lastUsedPath() string { return filepath.Join(p.Dir, "last_used") }
@@ -266,6 +280,10 @@ func ChromePath() (string, error) {
 // Launch starts a detached Chrome for this profile and waits until its
 // debugging endpoint answers. The process outlives oko.
 func (p *Profile) Launch(ctx context.Context, headless bool) (string, error) {
+	// A fresh browser counts as used from the start, so an idle reaper (this
+	// profile's or one another command spawns for it) never closes it before
+	// the command that launched it gets to drive it.
+	p.Touch()
 	bin, err := ChromePath()
 	if err != nil {
 		return "", err

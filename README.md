@@ -24,8 +24,10 @@ Cross-origin iframes get refs like `f1e3`. `trim` and `revive` handle long
 feeds and crashed tabs; `--human` gives curved mouse paths and wheel scrolling.
 `oko up --proxy http://user:pass@host:port` routes a profile through an
 authenticated proxy (http, https, socks5) via a local relay. A browser
-nobody drives for an hour closes itself (`oko up --idle 4h|off` per profile);
-the next command starts it again with the same logins.
+nobody drives for 30 minutes closes itself (`oko up --idle 4h|off` per
+profile, `$OKO_IDLE` for every profile without its own limit); the next
+command starts it again with the same logins. A browser whose closer died is
+picked up by the next oko command on any profile.
 
 **Point instead of describe.** In the oko window press Alt+P and click
 elements (with an optional note); the agent gets each one as a snapshot ref,

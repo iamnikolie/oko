@@ -253,11 +253,13 @@ oko status | up [--headless] [--lang en-US] [--proxy URL] [--idle 30m|off] | dow
   session). Check it is still the page you mean before acting.
 - `--tab <id>` / `$OKO_TAB` acts on a specific tab without changing your current
   one. Sessions idle for 6 h release their tabs.
-- Idle close: a browser no oko command has driven for 1 h closes by itself
+- Idle close: a browser no oko command has driven for 30 min closes by itself
   (with its watcher and relay); the next command starts it again with the same
-  logins, but open tabs are gone. A window the user has in front (macOS) stays.
-  `oko up --idle 4h` changes the limit per profile, `--idle off` disables it.
-  Run `oko down` when done with a profile anyway.
+  logins, but open tabs are gone. A running command (`console --follow`,
+  `net --live`) and an unfinished `record` count as use; a window the user has
+  in front (macOS) stays. `oko up --idle 4h` changes the limit per profile,
+  `--idle off` disables it, `--idle default` goes back to `$OKO_IDLE` (else
+  30m). Run `oko down` when done with a profile anyway.
 - `navigator.webdriver` is false: Chrome starts with
   `--disable-blink-features=AutomationControlled` (+ `--test-type`, which hides
   Chrome's "unsupported flag" bar).

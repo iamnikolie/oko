@@ -65,12 +65,14 @@ var upCmd = &cobra.Command{
 			_ = p.Save()
 		}
 		if upIdle != "" {
-			if upIdle != "off" && upIdle != "0" {
-				if d, err := time.ParseDuration(upIdle); err != nil || d <= 0 {
-					return fmt.Errorf("--idle: want a duration like 30m or 2h, or off")
-				}
+			if upIdle == "default" {
+				// Back to $OKO_IDLE / the built-in limit.
+				p.State.Idle = ""
+			} else if _, ok := chrome.ParseIdle(upIdle); !ok {
+				return fmt.Errorf("--idle: want a duration like 30m or 2h, off, or default")
+			} else {
+				p.State.Idle = upIdle
 			}
-			p.State.Idle = upIdle
 			_ = p.Save()
 		}
 		proxyNote := ""
@@ -437,7 +439,7 @@ var closeCmd = &cobra.Command{
 func init() {
 	upCmd.Flags().BoolVar(&upHeadless, "headless", false, "run without a window (remembered until 'oko down')")
 	upCmd.Flags().StringVar(&upProxy, "proxy", "", "upstream proxy for this profile, remembered: http://user:pass@host:port, https://…, socks5://… ('none' to clear)")
-	upCmd.Flags().StringVar(&upIdle, "idle", "", "close the browser after this long without an oko command, remembered (e.g. 30m, 4h; 'off' keeps it open; default 1h)")
+	upCmd.Flags().StringVar(&upIdle, "idle", "", "close the browser after this long without an oko command, remembered (e.g. 30m, 4h; 'off' keeps it open; 'default' = $OKO_IDLE or 30m)")
 	upCmd.Flags().BoolVar(&upNativeSelects, "native-selects", false, "keep native <select> popups in recordings and --human runs, remembered (--native-selects=false to undo)")
 	upCmd.Flags().StringVar(&upLang, "lang", "", "browser language for this profile, remembered (e.g. en-US; 'system' to clear)")
 	openCmd.Flags().BoolVarP(&openNew, "new", "n", false, "open in a new background window, owned by this session, and make it current")

@@ -37,10 +37,17 @@ func reapPID(p *chrome.Profile) int {
 	return pid
 }
 
-// used marks the browser as driven and makes sure a reaper watches it.
+// used marks the browser as driven and makes sure a reaper watches it, and
+// any other profile's browser that lost its reaper.
 func used(p *chrome.Profile) {
 	p.Touch()
-	// The user's own Chrome is never closed for being idle.
+	ensureReaper(p)
+	sweepOrphans(p.Name)
+}
+
+// ensureReaper starts the profile's reaper unless one is running. The user's
+// own Chrome (extension profile) is never closed for being idle.
+func ensureReaper(p *chrome.Profile) {
 	if p.State.Extension || p.IdleTTL() == 0 || reapPID(p) != 0 {
 		return
 	}
@@ -53,6 +60,80 @@ func used(p *chrome.Profile) {
 	if c.Start() == nil {
 		go func() { _ = c.Wait() }()
 	}
+}
+
+// sweepOrphans gives a reaper to every other profile whose Chrome is running
+// without one: its reaper was killed or crashed, or the browser was started
+// by an oko that had none. Nothing else would ever close such a browser,
+// since only a command on that same profile starts its reaper. The reaper
+// closes it at once when it has been idle past the limit. Cheap enough for
+// every command: one readlink per profile, and a state read only for a live
+// Chrome without a reaper.
+func sweepOrphans(skip string) {
+	ents, err := os.ReadDir(filepath.Join(chrome.Home(), "profiles"))
+	if err != nil {
+		return
+	}
+	for _, e := range ents {
+		if !e.IsDir() || e.Name() == skip {
+			continue
+		}
+		dir := filepath.Join(chrome.Home(), "profiles", e.Name())
+		if _, err := os.Lstat(filepath.Join(dir, "chrome", "SingletonLock")); err != nil {
+			continue
+		}
+		p, err := chrome.Load(e.Name())
+		if err != nil || p.PID() == 0 {
+			continue
+		}
+		ensureReaper(p)
+	}
+}
+
+// keepUsed marks the browser as used while a long command (console
+// --follow, picks --wait, net --live, a slow page) runs, so the reaper never
+// closes it under a command, and once more when the command ends. Call the
+// returned func when done.
+func keepUsed(p *chrome.Profile) func() {
+	ttl := p.IdleTTL()
+	if p.State.Extension || ttl == 0 {
+		return func() {}
+	}
+	every := ttl / 3
+	if every > time.Minute {
+		every = time.Minute
+	}
+	if every < 500*time.Millisecond {
+		every = 500 * time.Millisecond
+	}
+	done := make(chan struct{})
+	go func() {
+		t := time.NewTicker(every)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-t.C:
+				p.Touch()
+			}
+		}
+	}()
+	return func() {
+		close(done)
+		p.Touch()
+	}
+}
+
+// recording reports whether a screencast recorder is still running on any of
+// the profile's tabs: an unfinished recording keeps the browser open.
+func recording(p *chrome.Profile) bool {
+	for _, pid := range p.State.Recorders {
+		if pid > 0 && syscall.Kill(pid, 0) == nil {
+			return true
+		}
+	}
+	return false
 }
 
 // stopBrowser closes the profile's Chrome and the processes riding along
@@ -117,13 +198,30 @@ var idleCmd = &cobra.Command{
 			}
 			idle := time.Since(p.LastUsed())
 			if idle >= ttl {
-				if p.Frontmost() {
-					// Someone is using the window by hand.
+				if p.Frontmost() || recording(p) {
+					// Someone is using the window by hand, or a recording
+					// is still running.
 					p.Touch()
 				} else {
 					ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+					pid := p.PID()
 					_, err := stopBrowser(ctx, p)
 					cancel()
+					if err != nil && pid != 0 && p.PID() == pid {
+						// A hung Chrome ignored BrowserClose and SIGTERM;
+						// nothing else would ever close it.
+						_ = syscall.Kill(pid, syscall.SIGKILL)
+						for i := 0; i < 30 && p.PID() != 0; i++ {
+							time.Sleep(100 * time.Millisecond)
+						}
+						if p.PID() == 0 {
+							p.StopRelay()
+							if w := watchPID(p); w != 0 {
+								_ = syscall.Kill(w, syscall.SIGTERM)
+							}
+							err = nil
+						}
+					}
 					return err
 				}
 				idle = 0

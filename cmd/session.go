@@ -93,7 +93,9 @@ func run(fn func(s *session) error) error {
 	// The element picker and the idle reaper ride along with the browser.
 	_ = ensureWatch(s.prof, false)
 	used(s.prof)
+	done := keepUsed(s.prof)
 	err = fn(s)
+	done()
 	s.flushNotes()
 	s.record()
 	if s.prof.State.Extension {
