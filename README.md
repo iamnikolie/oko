@@ -176,6 +176,14 @@ profile, `oko watch on` back on.
   cannot forge picks. The watcher avoids `Runtime.enable` (a common bot-check
   signal) and reinstalls the binding for each new document instead. Picks are
   stored in `profiles/<name>/picks/`.
+- oko signals only processes it started itself. At start it records the
+  pid, the start time and the executable as the kernel reports them (macOS
+  sysctl + proc_pidpath, Linux /proc) and the oko home; before any signal
+  it checks them again. A reused pid, a look-alike process or another
+  home's helper never matches. A browser oko cannot prove is asked to close
+  over its own DevTools port instead.
+- Commands hold a shared lock on the profile while they run; the idle
+  closer closes the browser only when it can take that lock alone.
 - JS dialogs are answered during every command (they would otherwise freeze
   the tab) and reported.
 

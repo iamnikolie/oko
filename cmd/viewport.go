@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"syscall"
@@ -138,6 +139,10 @@ func startHolder(s *session, p *rod.Page, w, h int, scale float64, mobile bool) 
 	}
 	pid := c.Process.Pid
 	go func() { _ = c.Wait() }()
+	if err := chrome.RecordProc(holderRecordPath(s.prof, p.TargetID), pid, self, time.Time{}); err != nil {
+		_ = c.Process.Signal(syscall.SIGTERM) // our own child: its handle is still ours
+		return fmt.Errorf("device emulation did not start: %w", err)
+	}
 
 	// Wait until the emulation is visible from our own session.
 	deadline := time.Now().Add(8 * time.Second)
@@ -160,16 +165,21 @@ func startHolder(s *session, p *rod.Page, w, h int, scale float64, mobile bool) 
 			return nil
 		}
 	}
-	_ = syscall.Kill(pid, syscall.SIGTERM)
+	_ = c.Process.Signal(syscall.SIGTERM)
 	return fmt.Errorf("device emulation did not take effect")
 }
 
+// holderRecordPath holds a tab's emulation holder's process record.
+func holderRecordPath(prof *chrome.Profile, tab proto.TargetTargetID) string {
+	return filepath.Join(prof.Dir, "hold-"+string(tab)+".proc")
+}
+
 func stopHolder(prof *chrome.Profile, tab proto.TargetTargetID) {
-	pid := prof.State.Holders[string(tab)]
-	if pid == 0 {
+	if prof.State.Holders[string(tab)] == 0 {
 		return
 	}
-	_ = syscall.Kill(pid, syscall.SIGTERM)
+	// Only the holder oko started is signalled (its process record).
+	chrome.SignalOwned(holderRecordPath(prof, tab), syscall.SIGTERM)
 	delete(prof.State.Holders, string(tab))
 	_ = prof.Save()
 	time.Sleep(100 * time.Millisecond)

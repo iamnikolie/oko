@@ -64,12 +64,13 @@ func RedactProxy(s string) string {
 	return u.String()
 }
 
-func (p *Profile) relayPortPath() string { return filepath.Join(p.Dir, "proxy.port") }
-func (p *Profile) RelayLogPath() string  { return filepath.Join(p.Dir, "proxy.log") }
+func (p *Profile) relayPortPath() string   { return filepath.Join(p.Dir, "proxy.port") }
+func (p *Profile) relayRecordPath() string { return filepath.Join(p.Dir, "relay.proc") }
+func (p *Profile) RelayLogPath() string    { return filepath.Join(p.Dir, "proxy.log") }
 
 // RelayPort returns the port of this profile's live relay, or 0.
 func (p *Profile) RelayPort() int {
-	if p.State.Relay <= 0 || syscall.Kill(p.State.Relay, 0) != nil {
+	if OwnedPID(p.relayRecordPath()) == 0 {
 		return 0
 	}
 	b, err := os.ReadFile(p.relayPortPath())
@@ -111,8 +112,10 @@ func (p *Profile) ensureRelay() (int, error) {
 		return 0, fmt.Errorf("start proxy relay: %w", err)
 	}
 	go func() { _ = c.Wait() }()
-	p.State.Relay = c.Process.Pid
-	_ = p.Save()
+	if err := RecordProc(p.relayRecordPath(), c.Process.Pid, self, time.Time{}); err != nil {
+		_ = c.Process.Kill() // our own child, not yet reaped: its pid is still ours
+		return 0, fmt.Errorf("start proxy relay: %w", err)
+	}
 	for i := 0; i < 50; i++ {
 		time.Sleep(100 * time.Millisecond)
 		if port := p.RelayPort(); port > 0 {
@@ -124,11 +127,8 @@ func (p *Profile) ensureRelay() (int, error) {
 
 // StopRelay ends the profile's relay, if any.
 func (p *Profile) StopRelay() {
-	if pid := Helper(p.State.Relay, "_proxy", p.Name); pid != 0 {
-		_ = syscall.Kill(pid, syscall.SIGTERM)
-	}
-	p.State.Relay = 0
-	_ = p.Save()
+	SignalOwned(p.relayRecordPath(), syscall.SIGTERM)
+	_ = os.Remove(p.relayRecordPath())
 }
 
 // ServeRelay runs the relay for the named profile until its Chrome is gone.
@@ -171,7 +171,7 @@ func (r *relay) watch(ln net.Listener) {
 	gone := 0
 	for {
 		p, err := Load(r.name)
-		if err == nil && p.PID() != 0 {
+		if err == nil && p.LockHolder() != 0 {
 			gone = 0
 		} else if gone++; gone >= 3 {
 			log.Printf("chrome gone, relay exits")

@@ -258,11 +258,3 @@ func Profiles() []string {
 	sort.Strings(out)
 	return out
 }
-
-func writeAtomic(path string, b []byte) error {
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
-}

@@ -90,6 +90,9 @@ const cursorJS = `(() => {
   if (document.documentElement) add(); else addEventListener('DOMContentLoaded', add);
 })()`
 
+// recorderRecordPath holds the recorder's process record (chrome.RecordProc).
+func recorderRecordPath(dir string) string { return filepath.Join(dir, "recorder.proc") }
+
 func recordDir(prof *chrome.Profile, tab proto.TargetTargetID) string {
 	return filepath.Join(prof.Dir, "recording-"+shortID(tab))
 }
@@ -161,6 +164,10 @@ func recordStart(s *session) error {
 		return err
 	}
 	go func() { _ = c.Wait() }()
+	if err := chrome.RecordProc(recorderRecordPath(dir), c.Process.Pid, self, time.Time{}); err != nil {
+		_ = c.Process.Signal(syscall.SIGTERM) // our own child: its handle is still ours
+		return fmt.Errorf("recorder did not start: %w", err)
+	}
 	// Wait for the recorder to report it is capturing.
 	ready := filepath.Join(dir, "ready")
 	for i := 0; i < 50; i++ {
@@ -170,7 +177,7 @@ func recordStart(s *session) error {
 		time.Sleep(100 * time.Millisecond)
 	}
 	if _, err := os.Stat(ready); err != nil {
-		_ = syscall.Kill(c.Process.Pid, syscall.SIGTERM)
+		_ = c.Process.Signal(syscall.SIGTERM)
 		return fmt.Errorf("recorder did not start; see %s", filepath.Join(dir, "recorder.log"))
 	}
 	if s.prof.State.Recorders == nil {
@@ -193,9 +200,11 @@ func recordStop(s *session) error {
 		return errors.New("not recording this tab")
 	}
 	dir := recordDir(s.prof, p.TargetID)
-	_ = syscall.Kill(pid, syscall.SIGTERM)
-	for i := 0; i < 100 && syscall.Kill(pid, 0) == nil; i++ {
-		time.Sleep(100 * time.Millisecond)
+	// Only the recorder oko started is signalled (its process record).
+	if chrome.SignalOwned(recorderRecordPath(dir), syscall.SIGTERM) {
+		for i := 0; i < 100 && chrome.OwnedPID(recorderRecordPath(dir)) != 0; i++ {
+			time.Sleep(100 * time.Millisecond)
+		}
 	}
 	delete(s.prof.State.Recorders, tab)
 	_ = s.prof.Save()

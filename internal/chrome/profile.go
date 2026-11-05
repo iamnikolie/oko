@@ -30,8 +30,6 @@ type State struct {
 	// Proxy is the upstream proxy URL (credentials included) Chrome reaches
 	// the web through, via the local relay; empty means direct.
 	Proxy string `json:"proxy,omitempty"`
-	// Relay is the pid of the profile's proxy relay.
-	Relay int `json:"relay,omitempty"`
 	// Human makes input human-like by default (curved mouse, wheel scroll).
 	Human bool `json:"human,omitempty"`
 	// NativeSelects keeps native <select> popups in recordings and --human
@@ -114,7 +112,7 @@ func (p *Profile) Frontmost() bool {
 	if runtime.GOOS != "darwin" || p.State.Headless {
 		return false
 	}
-	pid := p.PID()
+	pid := p.LockHolder()
 	return pid != 0 && frontmostPID() == pid
 }
 
@@ -159,11 +157,7 @@ func (p *Profile) LogPath() string     { return filepath.Join(p.Dir, "chrome.log
 
 func (p *Profile) Save() error {
 	b, _ := json.MarshalIndent(p.State, "", "  ")
-	tmp := p.statePath() + ".tmp"
-	if err := os.WriteFile(tmp, b, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(tmp, p.statePath())
+	return writeAtomic(p.statePath(), b)
 }
 
 // Endpoint returns the websocket URL of this profile's own Chrome, or an
@@ -208,18 +202,6 @@ func (p *Profile) Endpoint(ctx context.Context) (string, error) {
 		_ = p.Save()
 	}
 	return v.WS, nil
-}
-
-// PID returns the pid of this profile's own Chrome: the process holding its
-// SingletonLock, alive, and proven to be the Chrome of this profile (see
-// isOurChrome). 0 when not running or when ownership cannot be proven, so
-// callers never signal a process that merely reused the pid.
-func (p *Profile) PID() int {
-	pid := p.lockPID()
-	if _, ok := p.isOurChrome(pid); !ok {
-		return 0
-	}
-	return pid
 }
 
 func frontmostPID() int {
@@ -323,6 +305,7 @@ func (p *Profile) Launch(ctx context.Context, headless bool) (string, error) {
 	args = append(args, "about:blank")
 
 	_ = os.Remove(filepath.Join(p.UserDataDir(), "DevToolsActivePort"))
+	launched := time.Now()
 	logf, err := os.OpenFile(p.LogPath(), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return "", err
@@ -350,7 +333,7 @@ func (p *Profile) Launch(ctx context.Context, headless bool) (string, error) {
 	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
 		if ws, err := p.Endpoint(ctx); err == nil {
-			p.recordLaunch()
+			p.recordLaunch(bin, launched)
 			if front > 0 {
 				// Chrome raises its new window anyway; hand focus back.
 				time.Sleep(300 * time.Millisecond)

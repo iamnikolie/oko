@@ -6,7 +6,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -23,16 +22,23 @@ import (
 // once no oko command has driven it for the profile's idle limit, then exits;
 // the next command starts the browser again with the same logins.
 
-func reapPidPath(p *chrome.Profile) string { return filepath.Join(p.Dir, "idle.pid") }
+// reapRecordPath holds the reaper's process record (see chrome.RecordProc).
+func reapRecordPath(p *chrome.Profile) string { return filepath.Join(p.Dir, "idle.proc") }
 
-// reapPID is the pid of the profile's live reaper, proven by its command line.
-func reapPID(p *chrome.Profile) int {
-	b, err := os.ReadFile(reapPidPath(p))
-	if err != nil {
-		return 0
+// browserUp reports whether the profile has a browser to close: the Chrome
+// oko launched (proven), or any browser answering on the profile's own
+// DevTools port (one an older oko started), which CDP can close.
+func browserUp(p *chrome.Profile) bool {
+	if p.PID() != 0 {
+		return true
 	}
-	pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
-	return chrome.Helper(pid, "_idle", p.Name)
+	if p.LockHolder() == 0 {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_, err := p.Endpoint(ctx)
+	return err == nil
 }
 
 func reapLockPath(p *chrome.Profile) string { return filepath.Join(p.Dir, "idle.lock") }
@@ -55,7 +61,7 @@ func reaperRunning(p *chrome.Profile) bool {
 func used(p *chrome.Profile) {
 	p.Touch()
 	if !p.State.Extension {
-		p.ApplyIdle()
+		_ = p.ApplyIdle() // on failure the previous whole value stays in force
 	}
 	ensureReaper(p)
 	sweepOrphans(p.Name)
@@ -82,9 +88,9 @@ func ensureReaper(p *chrome.Profile) {
 // running without one: its reaper was killed or crashed, or an oko without
 // reapers started it. Nothing else would ever close such a browser, since
 // only a command on that same profile starts its reaper. The reaper closes
-// it at once when it has been idle past the limit. A profile's Chrome counts
-// only when proven to be that profile's (chrome.Profile.PID): a stale lock
-// whose pid now belongs to another process is left alone.
+// it at once when it has been idle past the limit. The reaper signals only
+// a Chrome proven against oko's launch record; any other browser it can
+// only ask to close over the profile's own DevTools port.
 func sweepOrphans(skip string) {
 	ents, err := os.ReadDir(filepath.Join(chrome.Home(), "profiles"))
 	if err != nil {
@@ -99,9 +105,7 @@ func sweepOrphans(skip string) {
 			continue
 		}
 		p, err := chrome.Load(e.Name())
-		// Cheap checks first; PID (which inspects the process) only for a
-		// live lock that no reaper watches.
-		if err != nil || p.State.Extension || !p.LockAlive() || reaperRunning(p) || p.PID() == 0 {
+		if err != nil || p.State.Extension || p.LockHolder() == 0 || reaperRunning(p) || !browserUp(p) {
 			continue
 		}
 		ensureReaper(p)
@@ -109,42 +113,52 @@ func sweepOrphans(skip string) {
 }
 
 // stopBrowser closes the profile's Chrome and the processes riding along
-// with it. It reports false when Chrome was not running. Only processes
-// proven to belong to the profile are signalled.
+// with it. It reports false when Chrome was not running. A browser is asked
+// to close over CDP; signals go only to processes proven against the record
+// oko wrote when it started them (chrome.SignalOwned).
 func stopBrowser(ctx context.Context, p *chrome.Profile) (bool, error) {
 	if p.State.Extension {
 		return stopExtension(ctx)
 	}
-	pid := p.PID()
+	up := false
 	if ws, err := p.Endpoint(ctx); err == nil {
+		up = true
 		b := rod.New().ControlURL(ws).Context(ctx)
 		if b.Connect() == nil {
 			_ = proto.BrowserClose{}.Call(b)
-		} else if pid != 0 {
-			_ = syscall.Kill(pid, syscall.SIGTERM)
+		} else {
+			p.SignalChrome(syscall.SIGTERM)
 		}
-	} else if pid == 0 {
+	} else if p.SignalChrome(syscall.SIGTERM) {
+		up = true
+	}
+	if !up {
 		p.StopRelay()
 		p.ClearIdle()
 		return false, nil
-	} else {
-		_ = syscall.Kill(pid, syscall.SIGTERM)
 	}
-	for i := 0; i < 50 && p.PID() != 0; i++ {
+	for i := 0; i < 50 && chromeThere(p); i++ {
 		time.Sleep(100 * time.Millisecond)
 	}
-	if pid := p.PID(); pid != 0 {
-		return true, fmt.Errorf("chrome (pid %d) did not exit", pid)
+	if chromeThere(p) {
+		return true, fmt.Errorf("chrome (pid %d) did not exit", p.LockHolder())
 	}
+	stopHelpers(p)
+	return true, nil
+}
+
+// chromeThere: a browser still holds the profile (observation only).
+func chromeThere(p *chrome.Profile) bool { return p.PID() != 0 || p.LockHolder() != 0 }
+
+// stopHelpers ends what rides along with a closed browser: relay, watcher,
+// reaper (unless that is us), each only when proven to be oko's.
+func stopHelpers(p *chrome.Profile) {
 	p.StopRelay()
 	p.ClearIdle()
-	if pid := watchPID(p); pid != 0 {
-		_ = syscall.Kill(pid, syscall.SIGTERM)
+	chrome.SignalOwned(watchRecordPath(p), syscall.SIGTERM)
+	if chrome.OwnedPID(reapRecordPath(p)) != os.Getpid() {
+		chrome.SignalOwned(reapRecordPath(p), syscall.SIGTERM)
 	}
-	if pid := reapPID(p); pid != 0 && pid != os.Getpid() {
-		_ = syscall.Kill(pid, syscall.SIGTERM)
-	}
-	return true, nil
 }
 
 // reapGate is a test hook: with $OKO_TEST_REAP_GATE set to a directory, the
@@ -187,8 +201,8 @@ var idleCmd = &cobra.Command{
 			}
 			time.Sleep(50 * time.Millisecond)
 		}
-		_ = os.WriteFile(reapPidPath(p0), []byte(strconv.Itoa(os.Getpid())), 0o600)
-		defer os.Remove(reapPidPath(p0))
+		_ = chrome.RecordProc(reapRecordPath(p0), os.Getpid(), chrome.SelfExe(), time.Time{})
+		defer os.Remove(reapRecordPath(p0))
 		for {
 			// Reload each round: a command may have changed the limit.
 			p, err := chrome.Load(profileName)
@@ -196,7 +210,7 @@ var idleCmd = &cobra.Command{
 				return err
 			}
 			ttl := p.IdleLimit()
-			if ttl == 0 || p.PID() == 0 {
+			if ttl == 0 || !browserUp(p) {
 				return nil
 			}
 			idle := time.Since(p.LastUsed())
@@ -226,7 +240,7 @@ func reapOnce(p *chrome.Profile) (bool, error) {
 	// Decide again under the lease: a command may have just finished or
 	// changed the limit.
 	ttl := p.IdleLimit()
-	if ttl == 0 || p.PID() == 0 {
+	if ttl == 0 || !browserUp(p) {
 		return true, nil
 	}
 	if time.Since(p.LastUsed()) < ttl {
@@ -240,21 +254,16 @@ func reapOnce(p *chrome.Profile) (bool, error) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	pid := p.PID()
 	_, err := stopBrowser(ctx, p)
-	if err != nil && pid != 0 && p.PID() == pid {
+	if err != nil && p.SignalChrome(syscall.SIGKILL) {
 		// A hung Chrome ignored BrowserClose and SIGTERM; nothing else
-		// would ever close it. PID proved again that it is still ours.
-		_ = syscall.Kill(pid, syscall.SIGKILL)
-		for i := 0; i < 30 && p.PID() != 0; i++ {
+		// would ever close it. SignalChrome proved it is still the Chrome
+		// oko launched.
+		for i := 0; i < 30 && chromeThere(p); i++ {
 			time.Sleep(100 * time.Millisecond)
 		}
-		if p.PID() == 0 {
-			p.StopRelay()
-			p.ClearIdle()
-			if w := watchPID(p); w != 0 {
-				_ = syscall.Kill(w, syscall.SIGTERM)
-			}
+		if !chromeThere(p) {
+			stopHelpers(p)
 			err = nil
 		}
 	}

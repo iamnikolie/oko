@@ -2,6 +2,8 @@ package e2e
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -101,11 +103,10 @@ func TestIdleOrphan(t *testing.T) {
 	p := []string{"-p", "idleorphan"}
 	defer oko(t, append(p, "down")...)
 	must(t, oko(t, append(p, "up", "--headless", "--idle", "2s")...), "closes after 2s idle")
-	pidFile := filepath.Join(home, "profiles", "idleorphan", "idle.pid")
+	pidFile := filepath.Join(home, "profiles", "idleorphan", "idle.proc")
 	var reaper int
 	for i := 0; i < 30 && reaper == 0; i++ {
-		b, _ := os.ReadFile(pidFile)
-		reaper, _ = strconv.Atoi(strings.TrimSpace(string(b)))
+		reaper = procPID(pidFile)
 		time.Sleep(100 * time.Millisecond)
 	}
 	if reaper == 0 {
@@ -236,39 +237,111 @@ func TestIdleCommandDuringClose(t *testing.T) {
 	must(t, out, "started chrome")
 }
 
-// A stale lock whose pid now belongs to an unrelated process: no command,
-// sweep, reaper or 'oko down' may signal that process.
+// procPID reads the pid from one of oko's process records.
+func procPID(path string) int {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	var r struct {
+		PID int `json:"pid"`
+	}
+	_ = json.Unmarshal(b, &r)
+	return r.PID
+}
+
+// startVictim starts a process the test owns that no oko may signal.
+func startVictim(t *testing.T, name string, args ...string) (int, <-chan error) {
+	t.Helper()
+	c := exec.Command(name, args...)
+	if err := c.Start(); err != nil {
+		t.Fatal(err)
+	}
+	ch := make(chan error, 1)
+	go func() { ch <- c.Wait() }()
+	t.Cleanup(func() { _ = c.Process.Kill() })
+	time.Sleep(100 * time.Millisecond)
+	return c.Process.Pid, ch
+}
+
+func mustLive(t *testing.T, exited <-chan error, what string) {
+	t.Helper()
+	select {
+	case err := <-exited:
+		t.Fatalf("%s was signalled: %v", what, err)
+	case <-time.After(3 * time.Second):
+	}
+}
+
+// A stale lock whose pid now belongs to a process oko did not launch, plain
+// or with an oko Chrome's exact arguments and deaf to SIGTERM: no sweep,
+// reaper or 'oko down' may signal it.
 func TestIdleStaleLockSignalsNothing(t *testing.T) {
-	victim := exec.Command("sleep", "60")
-	if err := victim.Start(); err != nil {
+	for _, c := range []struct {
+		name string
+		args func(dir string) []string
+	}{
+		{"unrelated", func(string) []string { return []string{"sleep", "60"} }},
+		{"matching-args", func(dir string) []string {
+			return []string{"sh", "-c", "trap '' TERM; while :; do sleep 1; done", "chrome",
+				"--user-data-dir=" + filepath.Join(dir, "chrome"), "--remote-debugging-port=0"}
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			name := "idlestale-" + c.name
+			dir := filepath.Join(home, "profiles", name)
+			if err := os.MkdirAll(filepath.Join(dir, "chrome"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			a := c.args(dir)
+			pid, exited := startVictim(t, a[0], a[1:]...)
+			host, _ := os.Hostname()
+			if err := os.Symlink(host+"-"+strconv.Itoa(pid), filepath.Join(dir, "chrome", "SingletonLock")); err != nil {
+				t.Fatal(err)
+			}
+			_ = os.WriteFile(filepath.Join(dir, "state.json"), []byte(`{"headless":true,"idle":"1s"}`), 0o600)
+			_ = os.WriteFile(filepath.Join(dir, "last_used"), nil, 0o600)
+			old := time.Now().Add(-time.Hour)
+			_ = os.Chtimes(filepath.Join(dir, "last_used"), old, old)
+
+			oko(t, "eval", "1") // sweeps other profiles
+			must(t, oko(t, "-p", name, "status"), "stopped")
+			oko(t, "-p", name, "down")
+			mustLive(t, exited, "a process oko did not launch")
+			if _, err := os.Stat(filepath.Join(dir, "idle.proc")); err == nil {
+				t.Fatal("a reaper was started for a process that is not the profile's Chrome")
+			}
+		})
+	}
+}
+
+// A real oko relay of another home, named by this home's stale records (the
+// old state.json field, or a record whose start time does not match): 'oko
+// down' here must leave it alone. Same profile name, different home.
+func TestHelperOfOtherHomeSignalsNothing(t *testing.T) {
+	homeB := t.TempDir()
+	c := exec.Command(bin, "_proxy", "--profile", "work")
+	c.Env = append(os.Environ(), "OKO_HOME="+homeB)
+	if err := c.Start(); err != nil {
 		t.Fatal(err)
 	}
 	exited := make(chan error, 1)
-	go func() { exited <- victim.Wait() }()
-	defer victim.Process.Kill()
+	go func() { exited <- c.Wait() }()
+	defer c.Process.Kill()
+	time.Sleep(300 * time.Millisecond)
+	relayB := c.Process.Pid
 
-	dir := filepath.Join(home, "profiles", "idlestale")
-	if err := os.MkdirAll(filepath.Join(dir, "chrome"), 0o700); err != nil {
+	dir := filepath.Join(home, "profiles", "work")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	host, _ := os.Hostname()
-	if err := os.Symlink(host+"-"+strconv.Itoa(victim.Process.Pid), filepath.Join(dir, "chrome", "SingletonLock")); err != nil {
-		t.Fatal(err)
-	}
-	_ = os.WriteFile(filepath.Join(dir, "state.json"), []byte(`{"headless":true,"idle":"1s"}`), 0o600)
-	_ = os.WriteFile(filepath.Join(dir, "last_used"), nil, 0o600)
-	old := time.Now().Add(-time.Hour)
-	_ = os.Chtimes(filepath.Join(dir, "last_used"), old, old)
-
-	oko(t, "eval", "1") // sweeps other profiles
-	must(t, oko(t, "-p", "idlestale", "status"), "stopped")
-	oko(t, "-p", "idlestale", "down")
-	select {
-	case err := <-exited:
-		t.Fatalf("unrelated process was signalled: %v", err)
-	case <-time.After(3 * time.Second):
-	}
-	if _, err := os.Stat(filepath.Join(dir, "idle.pid")); err == nil {
-		t.Fatal("a reaper was started for a process that is not the profile's Chrome")
-	}
+	_ = os.WriteFile(filepath.Join(dir, "state.json"), []byte(fmt.Sprintf(`{"headless":true,"relay":%d}`, relayB)), 0o600)
+	canon, _ := filepath.EvalSymlinks(home)
+	exe, _ := filepath.EvalSymlinks(bin)
+	rec := fmt.Sprintf(`{"pid":%d,"start":"1.000000","exe":%q,"home":%q}`, relayB, exe, canon)
+	_ = os.WriteFile(filepath.Join(dir, "relay.proc"), []byte(rec), 0o600)
+	_ = os.WriteFile(filepath.Join(dir, "watch.proc"), []byte(rec), 0o600)
+	_ = os.WriteFile(filepath.Join(dir, "idle.proc"), []byte(rec), 0o600)
+	oko(t, "-p", "work", "down")
+	mustLive(t, exited, "home B's relay")
 }

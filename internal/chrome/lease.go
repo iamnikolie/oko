@@ -63,19 +63,19 @@ func (p *Profile) Exclusive() (func(), bool) {
 
 func (p *Profile) idleLimitPath() string { return filepath.Join(p.Dir, "idle.limit") }
 
-// ApplyIdle makes this caller's limit the one in force.
-func (p *Profile) ApplyIdle() {
+// ApplyIdle makes this caller's limit the one in force. Concurrent commands
+// each write a complete value through their own temp file and an atomic
+// rename (writeAtomic): the file always holds one whole value, the last
+// writer's.
+func (p *Profile) ApplyIdle() error {
 	v := "off"
 	if d := p.IdleTTL(); d > 0 {
 		v = d.String()
 	}
 	if b, err := os.ReadFile(p.idleLimitPath()); err == nil && string(b) == v {
-		return
+		return nil
 	}
-	tmp := p.idleLimitPath() + ".tmp"
-	if os.WriteFile(tmp, []byte(v), 0o600) == nil {
-		_ = os.Rename(tmp, p.idleLimitPath())
-	}
+	return writeAtomic(p.idleLimitPath(), []byte(v))
 }
 
 // IdleLimit is the limit in force: the applied one while it exists, else

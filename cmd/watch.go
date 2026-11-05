@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -27,31 +26,27 @@ import (
 // records in the profile's picks/ dir: snapshot ref, component + source file,
 // crop. 'oko picks' and the UserPromptSubmit hook read those records.
 
-func watchPidPath(p *chrome.Profile) string { return filepath.Join(p.Dir, "watch.pid") }
-func watchLogPath(p *chrome.Profile) string { return filepath.Join(p.Dir, "watch.log") }
+// watchRecordPath holds the watcher's process record (see chrome.RecordProc).
+func watchRecordPath(p *chrome.Profile) string { return filepath.Join(p.Dir, "watch.proc") }
+func watchLockPath(p *chrome.Profile) string   { return filepath.Join(p.Dir, "watch.lock") }
+func watchLogPath(p *chrome.Profile) string    { return filepath.Join(p.Dir, "watch.log") }
 func watchReadyPath(p *chrome.Profile) string {
 	return filepath.Join(p.Dir, "watch.ready")
 }
 
-// watchPID returns the pid of the profile's live watcher, or 0.
-func watchPID(p *chrome.Profile) int {
-	b, err := os.ReadFile(watchPidPath(p))
-	if err != nil {
-		return 0
-	}
-	pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
-	return chrome.Helper(pid, "_watch", p.Name)
-}
+// watchPID returns the pid of the profile's live watcher, proven against its
+// process record, or 0.
+func watchPID(p *chrome.Profile) int { return chrome.OwnedPID(watchRecordPath(p)) }
 
-// watchAlive is the cheap check whether to start a watcher: its pid file
-// names a live process. Signals go through watchPID, which proves it.
+// watchAlive reports whether a watcher holds the profile's watch lock: the
+// check before starting one, with no process to inspect.
 func watchAlive(p *chrome.Profile) bool {
-	b, err := os.ReadFile(watchPidPath(p))
+	f, err := os.OpenFile(watchLockPath(p), os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return false
 	}
-	pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
-	return pid > 0 && syscall.Kill(pid, 0) == nil
+	defer f.Close()
+	return syscall.Flock(int(f.Fd()), syscall.LOCK_SH|syscall.LOCK_NB) != nil
 }
 
 // ensureWatch starts the watcher when the browser runs without one. It never
@@ -526,13 +521,17 @@ var watcherCmd = &cobra.Command{
 			return err
 		}
 		// One watcher per profile, even when two commands spawn at once.
-		lf, err := os.OpenFile(filepath.Join(p.Dir, "watch.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+		lf, err := os.OpenFile(watchLockPath(p), os.O_CREATE|os.O_RDWR, 0o600)
 		if err != nil {
 			return err
 		}
 		defer lf.Close()
-		if syscall.Flock(int(lf.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil {
-			return nil
+		// Retry briefly: watchAlive probes the lock for an instant.
+		for i := 0; syscall.Flock(int(lf.Fd()), syscall.LOCK_EX|syscall.LOCK_NB) != nil; i++ {
+			if i >= 20 {
+				return nil // another watcher has this profile
+			}
+			time.Sleep(50 * time.Millisecond)
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -540,8 +539,8 @@ var watcherCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
-		_ = os.WriteFile(watchPidPath(p), []byte(strconv.Itoa(os.Getpid())), 0o600)
-		defer os.Remove(watchPidPath(p))
+		_ = chrome.RecordProc(watchRecordPath(p), os.Getpid(), chrome.SelfExe(), time.Time{})
+		defer os.Remove(watchRecordPath(p))
 		defer os.Remove(watchReadyPath(p))
 
 		w := &watcher{prof: p, b: s.b, ctx: ctx,
@@ -598,8 +597,7 @@ var watchCmd = &cobra.Command{
 			what = args[0]
 		}
 		stop := func() {
-			if pid := watchPID(p); pid != 0 {
-				_ = syscall.Kill(pid, syscall.SIGTERM)
+			if chrome.SignalOwned(watchRecordPath(p), syscall.SIGTERM) {
 				for i := 0; i < 30 && watchPID(p) != 0; i++ {
 					time.Sleep(100 * time.Millisecond)
 				}
