@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"syscall"
@@ -44,7 +45,9 @@ var viewportCmd = &cobra.Command{
 				if err != nil {
 					return err
 				}
-				stopHolder(s.prof, p.TargetID)
+				if err := stopHolder(s.prof, p.TargetID); err != nil {
+					return err
+				}
 				_ = proto.EmulationClearDeviceMetricsOverride{}.Call(p)
 				res, err := p.Eval(`() => innerWidth + 'x' + innerHeight`)
 				if err != nil {
@@ -65,7 +68,9 @@ var viewportCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			stopHolder(s.prof, p.TargetID)
+			if err := stopHolder(s.prof, p.TargetID); err != nil {
+				return err
+			}
 			if vpMobile || w < minWindowWidth {
 				scale := vpScale
 				if scale == 0 {
@@ -138,6 +143,10 @@ func startHolder(s *session, p *rod.Page, w, h int, scale float64, mobile bool) 
 	}
 	pid := c.Process.Pid
 	go func() { _ = c.Wait() }()
+	if err := chrome.RecordProc(holderRecordPath(s.prof, p.TargetID), pid, self, time.Time{}); err != nil {
+		_ = c.Process.Signal(syscall.SIGTERM) // our own child: its handle is still ours
+		return fmt.Errorf("device emulation did not start: %w", err)
+	}
 
 	// Wait until the emulation is visible from our own session.
 	deadline := time.Now().Add(8 * time.Second)
@@ -160,19 +169,32 @@ func startHolder(s *session, p *rod.Page, w, h int, scale float64, mobile bool) 
 			return nil
 		}
 	}
-	_ = syscall.Kill(pid, syscall.SIGTERM)
+	_ = c.Process.Signal(syscall.SIGTERM)
 	return fmt.Errorf("device emulation did not take effect")
 }
 
-func stopHolder(prof *chrome.Profile, tab proto.TargetTargetID) {
+// holderRecordPath holds a tab's emulation holder's process record.
+func holderRecordPath(prof *chrome.Profile, tab proto.TargetTargetID) string {
+	return filepath.Join(prof.Dir, "hold-"+string(tab)+".proc")
+}
+
+func stopHolder(prof *chrome.Profile, tab proto.TargetTargetID) error {
 	pid := prof.State.Holders[string(tab)]
 	if pid == 0 {
-		return
+		return nil
 	}
-	_ = syscall.Kill(pid, syscall.SIGTERM)
+	// Only the holder oko started is signalled (its process record). One
+	// that is alive but unproven (an older oko's, or a reused pid) is left
+	// alone and stays tracked.
+	if !chrome.SignalOwned(holderRecordPath(prof, tab), syscall.SIGTERM) && syscall.Kill(pid, 0) == nil {
+		return fmt.Errorf("the emulation of this tab is held by pid %d, which oko cannot prove it started "+
+			"(an older oko's, or the pid was reused); nothing was changed. If 'ps -p %d' shows 'oko _hold', "+
+			"end it yourself (or close the tab) and run the command again", pid, pid)
+	}
 	delete(prof.State.Holders, string(tab))
 	_ = prof.Save()
 	time.Sleep(100 * time.Millisecond)
+	return nil
 }
 
 // holdCmd is the background process behind emulated viewports: it applies

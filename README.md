@@ -24,8 +24,10 @@ Cross-origin iframes get refs like `f1e3`. `trim` and `revive` handle long
 feeds and crashed tabs; `--human` gives curved mouse paths and wheel scrolling.
 `oko up --proxy http://user:pass@host:port` routes a profile through an
 authenticated proxy (http, https, socks5) via a local relay. A browser
-nobody drives for an hour closes itself (`oko up --idle 4h|off` per profile);
-the next command starts it again with the same logins.
+nobody drives for 30 minutes closes itself (`oko up --idle 4h|off` per
+profile, `$OKO_IDLE` for every profile without its own limit); the next
+command starts it again with the same logins. A browser whose closer died is
+picked up by the next oko command on any profile.
 
 **Point instead of describe.** In the oko window press Alt+P and click
 elements (with an optional note); the agent gets each one as a snapshot ref,
@@ -174,6 +176,14 @@ profile, `oko watch on` back on.
   cannot forge picks. The watcher avoids `Runtime.enable` (a common bot-check
   signal) and reinstalls the binding for each new document instead. Picks are
   stored in `profiles/<name>/picks/`.
+- oko signals only processes it started itself. At start it records the
+  pid, the start time and the executable as the kernel reports them (macOS
+  sysctl + proc_pidpath, Linux /proc) and the oko home; before any signal
+  it checks them again. A reused pid, a look-alike process or another
+  home's helper never matches. A browser oko cannot prove is asked to close
+  over its own DevTools port instead.
+- Commands hold a shared lock on the profile while they run; the idle
+  closer closes the browser only when it can take that lock alone.
 - JS dialogs are answered during every command (they would otherwise freeze
   the tab) and reported.
 

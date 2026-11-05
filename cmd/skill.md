@@ -99,6 +99,11 @@ oko record stop -o demo.gif       # or demo.mp4; prints path, frames, duration, 
 oko record status
 ```
 
+`record stop` stops only a recorder this oko can prove it started. A recorder
+it cannot prove (started by an older oko) is left running with its frames and
+`stop` says so: end that `oko _record` process yourself and run `stop` again,
+or `stop --forget` to drop it without touching it.
+
 A hidden tab (another tab in front, minimized window) is activated first, since it
 paints no frames. Frames come from Chrome's screencast (only when the page repaints), idle gaps
 are capped at 2 s, the last frame is held 1.5 s. `--width` (960) and `--fps`
@@ -253,11 +258,14 @@ oko status | up [--headless] [--lang en-US] [--proxy URL] [--idle 30m|off] | dow
   session). Check it is still the page you mean before acting.
 - `--tab <id>` / `$OKO_TAB` acts on a specific tab without changing your current
   one. Sessions idle for 6 h release their tabs.
-- Idle close: a browser no oko command has driven for 1 h closes by itself
+- Idle close: a browser no oko command has driven for 30 min closes by itself
   (with its watcher and relay); the next command starts it again with the same
-  logins, but open tabs are gone. A window the user has in front (macOS) stays.
-  `oko up --idle 4h` changes the limit per profile, `--idle off` disables it.
-  Run `oko down` when done with a profile anyway.
+  logins, but open tabs are gone. A running command (`console --follow`,
+  `net --live`) and an unfinished `record` count as use; a window the user has
+  in front (macOS) stays. `oko up --idle 4h` changes the limit per profile,
+  `--idle off` disables it, `--idle default` goes back to `$OKO_IDLE` (else
+  30m). A running browser follows the limit of the latest command (`status`
+  shows it). Run `oko down` when done with a profile anyway.
 - `navigator.webdriver` is false: Chrome starts with
   `--disable-blink-features=AutomationControlled` (+ `--test-type`, which hides
   Chrome's "unsupported flag" bar).

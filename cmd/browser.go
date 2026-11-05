@@ -47,6 +47,13 @@ var upCmd = &cobra.Command{
 			printExtStatus(st, p.Name)
 			return nil
 		}
+		// Hold the command lease like any command: the reaper must not close
+		// the browser this command is starting or reconfiguring.
+		release, err := p.Use(ctx)
+		if err != nil {
+			return err
+		}
+		defer release()
 		if cmd.Flags().Changed("human") {
 			p.State.Human = humanFlag
 			_ = p.Save()
@@ -65,12 +72,14 @@ var upCmd = &cobra.Command{
 			_ = p.Save()
 		}
 		if upIdle != "" {
-			if upIdle != "off" && upIdle != "0" {
-				if d, err := time.ParseDuration(upIdle); err != nil || d <= 0 {
-					return fmt.Errorf("--idle: want a duration like 30m or 2h, or off")
-				}
+			if upIdle == "default" {
+				// Back to $OKO_IDLE / the built-in limit.
+				p.State.Idle = ""
+			} else if _, ok := chrome.ParseIdle(upIdle); !ok {
+				return fmt.Errorf("--idle: want a duration like 30m or 2h, off, or default")
+			} else {
+				p.State.Idle = upIdle
 			}
-			p.State.Idle = upIdle
 			_ = p.Save()
 		}
 		proxyNote := ""
@@ -149,9 +158,13 @@ var downCmd = &cobra.Command{
 	},
 }
 
-// idleNote describes when the browser closes on its own.
+// idleNote describes when the browser closes on its own: the limit in force
+// for a running browser, the one this caller would apply otherwise.
 func idleNote(p *chrome.Profile) string {
-	ttl := p.IdleTTL()
+	return idleText(p.IdleLimit())
+}
+
+func idleText(ttl time.Duration) string {
 	if ttl == 0 {
 		return "never closes when idle"
 	}
@@ -184,11 +197,15 @@ var statusCmd = &cobra.Command{
 		}
 		_, err = p.Endpoint(ctx)
 		running := err == nil
+		idleLimit := p.IdleTTL()
+		if running {
+			idleLimit = p.IdleLimit()
+		}
 		me := p.Session(sessionKey())
 		if jsonOutput {
 			out := map[string]interface{}{"profile": p.Name, "port": p.State.Port, "running": running,
 				"headless": p.State.Headless, "dir": p.UserDataDir(), "session": me.Key, "tab": shortTab(me.Tab),
-				"idle_limit": p.IdleTTL().String()}
+				"idle_limit": idleLimit.String()}
 			if t := p.LastUsed(); !t.IsZero() {
 				out["last_used"] = t.Format(time.RFC3339)
 			}
@@ -202,7 +219,7 @@ var statusCmd = &cobra.Command{
 		if running {
 			state = "running"
 		}
-		fmt.Fprintf(stdout, "profile %s: %s, port %d, %s\ndir: %s\n", p.Name, state, p.State.Port, idleNote(p), p.UserDataDir())
+		fmt.Fprintf(stdout, "profile %s: %s, port %d, %s\ndir: %s\n", p.Name, state, p.State.Port, idleText(idleLimit), p.UserDataDir())
 		cur := "none"
 		if me.Tab != "" {
 			cur = shortTab(me.Tab)
@@ -437,7 +454,7 @@ var closeCmd = &cobra.Command{
 func init() {
 	upCmd.Flags().BoolVar(&upHeadless, "headless", false, "run without a window (remembered until 'oko down')")
 	upCmd.Flags().StringVar(&upProxy, "proxy", "", "upstream proxy for this profile, remembered: http://user:pass@host:port, https://…, socks5://… ('none' to clear)")
-	upCmd.Flags().StringVar(&upIdle, "idle", "", "close the browser after this long without an oko command, remembered (e.g. 30m, 4h; 'off' keeps it open; default 1h)")
+	upCmd.Flags().StringVar(&upIdle, "idle", "", "close the browser after this long without an oko command, remembered (e.g. 30m, 4h; 'off' keeps it open; 'default' = $OKO_IDLE or 30m)")
 	upCmd.Flags().BoolVar(&upNativeSelects, "native-selects", false, "keep native <select> popups in recordings and --human runs, remembered (--native-selects=false to undo)")
 	upCmd.Flags().StringVar(&upLang, "lang", "", "browser language for this profile, remembered (e.g. en-US; 'system' to clear)")
 	openCmd.Flags().BoolVarP(&openNew, "new", "n", false, "open in a new background window, owned by this session, and make it current")
