@@ -110,7 +110,7 @@ func TestStaleRecordSignalsNothing(t *testing.T) {
 	bin := sleepBin(t)
 	pid, done := spawn(t, bin, "60")
 	path := filepath.Join(Home(), "x.proc")
-	b, _ := json.Marshal(procRecord{PID: pid, Start: "1.000000", Exe: resolveExe(bin), Home: canonicalHome()})
+	b, _ := json.Marshal(procRecord{PID: pid, Start: "1.000000", Exe: resolveExe(bin), Home: canonicalHome(), Path: canonicalPath(path)})
 	_ = os.WriteFile(path, b, 0o600)
 	if SignalOwned(path, syscall.SIGTERM) {
 		t.Fatal("signalled a process with another start time")
@@ -171,6 +171,49 @@ func TestRecordFromOtherHomeNotOwned(t *testing.T) {
 	t.Setenv("OKO_HOME", homeB)
 	if OwnedPID(recB) != pid {
 		t.Fatal("home B no longer owns its own process")
+	}
+}
+
+// A genuine record proves its process only where it was written: copied to
+// another profile or another purpose in the same home, or written without a
+// location (older oko), it proves nothing and signals nothing.
+func TestRecordBoundToLocation(t *testing.T) {
+	needIdentity(t)
+	t.Setenv("OKO_HOME", t.TempDir())
+	bin := sleepBin(t)
+	pid, done := spawn(t, bin, "60")
+	orig, _ := Load("orig")
+	other, _ := Load("other")
+	if err := RecordProc(orig.chromeRecordPath(), pid, bin, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	b, _ := os.ReadFile(orig.chromeRecordPath())
+	for _, dst := range []string{
+		other.chromeRecordPath(),               // another profile, same purpose
+		filepath.Join(orig.Dir, "idle.proc"),   // same profile, another purpose
+		filepath.Join(other.Dir, "relay.proc"), // both
+	} {
+		_ = os.WriteFile(dst, b, 0o600)
+		if OwnedPID(dst) != 0 || SignalOwned(dst, syscall.SIGKILL) {
+			t.Fatalf("record copied to %s signalled the original's process", dst)
+		}
+	}
+	if other.SignalChrome(syscall.SIGKILL) {
+		t.Fatal("profile other signalled profile orig's Chrome")
+	}
+	// A record without its location (the schema of an older oko).
+	var r procRecord
+	_ = json.Unmarshal(b, &r)
+	r.Path = ""
+	legacy, _ := json.Marshal(r)
+	lp := filepath.Join(orig.Dir, "legacy.proc")
+	_ = os.WriteFile(lp, legacy, 0o600)
+	if SignalOwned(lp, syscall.SIGKILL) {
+		t.Fatal("a record without a location signalled")
+	}
+	alive(t, done, "the original profile's process")
+	if orig.PID() != pid {
+		t.Fatal("the original record no longer proves its own process")
 	}
 }
 

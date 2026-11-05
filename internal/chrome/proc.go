@@ -15,9 +15,10 @@ import (
 // starts one (Chrome, the idle reaper, the picker watcher, the proxy relay)
 // it writes a record: the pid, the start time and the executable as the OS
 // reports them (sysctl kern.proc + proc_pidpath on macOS, /proc on Linux),
-// and the canonical oko home. Before every signal the record is checked
+// the canonical oko home and the record's own canonical location (profile
+// and purpose). Before every signal the record is checked
 // against the OS again: same pid, same start time, same executable, same
-// home. A pid that was reused, a process that merely looks like Chrome or
+// home, read from the same place it was written to. A pid that was reused, a process that merely looks like Chrome or
 // oko, a record copied from another home: none of them match, so they are
 // never signalled; a record that no longer matches is removed. Nothing is
 // inferred from command lines.
@@ -28,6 +29,11 @@ type procRecord struct {
 	Start string `json:"start"` // OS start time, exact (see osIdentity)
 	Exe   string `json:"exe"`   // executable path as the OS resolves it
 	Home  string `json:"home"`  // canonical oko home it was started for
+	// Path is where the record was written, canonical: it names the home,
+	// the profile and the purpose (chrome, idle, watch, relay, a tab's
+	// recorder or holder). A record read anywhere else (copied to another
+	// profile, another tab, another home) proves nothing.
+	Path string `json:"path"`
 }
 
 // errNoIdentity: the OS cannot describe the process (gone, or unsupported).
@@ -44,6 +50,19 @@ func canonicalHome() string {
 		h = r
 	}
 	return h
+}
+
+// canonicalPath resolves the directory of path (the file itself may not
+// exist yet), so one location has one spelling.
+func canonicalPath(path string) string {
+	if a, err := filepath.Abs(path); err == nil {
+		path = a
+	}
+	dir, base := filepath.Split(path)
+	if r, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = r
+	}
+	return filepath.Join(dir, base)
 }
 
 // resolveExe resolves a path the way the OS reports executables.
@@ -104,7 +123,7 @@ func RecordProc(path string, pid int, wantExe string, since time.Time) error {
 	if !since.IsZero() && start.Before(since.Add(-2*time.Second)) {
 		return errors.New("process started before oko launched it")
 	}
-	b, _ := json.Marshal(procRecord{PID: pid, Start: key, Exe: exe, Home: canonicalHome()})
+	b, _ := json.Marshal(procRecord{PID: pid, Start: key, Exe: exe, Home: canonicalHome(), Path: canonicalPath(path)})
 	return writeAtomic(path, b)
 }
 
@@ -124,6 +143,13 @@ func OwnedPID(path string) int {
 	if r.Home != canonicalHome() {
 		// Another home's record (a copied profile dir): not ours to judge
 		// or to clean up.
+		return 0
+	}
+	if r.Path == "" || r.Path != canonicalPath(path) {
+		// Written for another place (another profile, tab or purpose), or
+		// by an oko that did not bind records to a place: proves nothing
+		// here, and is no record of anything that lives here.
+		_ = os.Remove(path)
 		return 0
 	}
 	_, key, exe, err := osIdentity(r.PID)

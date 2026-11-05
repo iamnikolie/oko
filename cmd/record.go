@@ -32,9 +32,10 @@ import (
 // draws the pointer and click ripples, so actions are visible in the video.
 
 var (
-	recOut   string
-	recWidth int
-	recFPS   int
+	recOut    string
+	recForget bool
+	recWidth  int
+	recFPS    int
 
 	recNativeSelects bool
 )
@@ -200,12 +201,32 @@ func recordStop(s *session) error {
 		return errors.New("not recording this tab")
 	}
 	dir := recordDir(s.prof, p.TargetID)
+	rec := recorderRecordPath(dir)
 	// Only the recorder oko started is signalled (its process record).
-	if chrome.SignalOwned(recorderRecordPath(dir), syscall.SIGTERM) {
-		for i := 0; i < 100 && chrome.OwnedPID(recorderRecordPath(dir)) != 0; i++ {
+	switch {
+	case chrome.SignalOwned(rec, syscall.SIGTERM):
+		for i := 0; i < 100 && chrome.OwnedPID(rec) != 0; i++ {
 			time.Sleep(100 * time.Millisecond)
 		}
+		if chrome.OwnedPID(rec) != 0 {
+			return fmt.Errorf("recorder (pid %d) did not stop; nothing removed, frames stay in %s", pid, dir)
+		}
+	case syscall.Kill(pid, 0) == nil:
+		// Alive, but not provably the recorder oko started: one an older
+		// oko started (no record), or the pid now belongs to another
+		// process. Never signalled; its state and frames stay.
+		if recForget {
+			delete(s.prof.State.Recorders, tab)
+			_ = s.prof.Save()
+			fmt.Fprintf(stdout, "stopped tracking the recorder of tab %s (pid %d not signalled); frames left in %s\n", shortID(p.TargetID), pid, dir)
+			return nil
+		}
+		return fmt.Errorf("pid %d is still running, but oko cannot prove it is the recorder it started "+
+			"(an older oko's, or the pid was reused); nothing was stopped or removed, frames stay in %s. "+
+			"If 'ps -p %d' shows 'oko _record', end it yourself and run 'oko record stop' again; "+
+			"'oko record stop --forget' stops tracking it without touching the process", pid, dir, pid)
 	}
+	// The recorder is confirmed gone: encode what it captured.
 	delete(s.prof.State.Recorders, tab)
 	_ = s.prof.Save()
 
@@ -507,6 +528,7 @@ func encodeGoGIF(fr []frame, durs []time.Duration, out string) error {
 }
 
 func init() {
+	recordCmd.Flags().BoolVar(&recForget, "forget", false, "stop: stop tracking a recorder oko cannot prove is its own, without signalling it or removing its frames")
 	recordCmd.Flags().StringVarP(&recOut, "out", "o", "", "output file, .gif or .mp4 (default ~/.oko/recordings/<time>.gif)")
 	recordCmd.Flags().IntVar(&recWidth, "width", 960, "output width in pixels")
 	recordCmd.Flags().IntVar(&recFPS, "fps", 12, "output frame rate (ffmpeg)")

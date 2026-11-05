@@ -345,3 +345,127 @@ func TestHelperOfOtherHomeSignalsNothing(t *testing.T) {
 	oko(t, "-p", "work", "down")
 	mustLive(t, exited, "home B's relay")
 }
+
+// Valid records of one profile copied into another profile of the same home
+// prove nothing there: 'down' on the copy leaves the original's Chrome and
+// reaper running.
+func TestCopiedRecordsSignalNothing(t *testing.T) {
+	orig := []string{"-p", "recorig"}
+	defer oko(t, append(orig, "down")...)
+	must(t, oko(t, append(orig, "up", "--headless", "--idle", "30m")...), "started")
+	src := filepath.Join(home, "profiles", "recorig")
+	var reaper int
+	for i := 0; i < 30 && reaper == 0; i++ {
+		reaper = procPID(filepath.Join(src, "idle.proc"))
+		time.Sleep(100 * time.Millisecond)
+	}
+	chromePID := procPID(filepath.Join(src, "chrome.proc"))
+	if chromePID == 0 || reaper == 0 {
+		t.Fatalf("no records: chrome %d, reaper %d", chromePID, reaper)
+	}
+	dst := filepath.Join(home, "profiles", "reccopy")
+	if err := os.MkdirAll(dst, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"chrome.proc", "idle.proc"} {
+		b, _ := os.ReadFile(filepath.Join(src, f))
+		_ = os.WriteFile(filepath.Join(dst, f), b, 0o600)
+	}
+	// Same purpose swapped too: the reaper's record as the watcher's.
+	b, _ := os.ReadFile(filepath.Join(src, "idle.proc"))
+	_ = os.WriteFile(filepath.Join(dst, "watch.proc"), b, 0o600)
+	must(t, oko(t, "-p", "reccopy", "down"), "not running")
+	time.Sleep(time.Second)
+	if syscall.Kill(chromePID, 0) != nil || syscall.Kill(reaper, 0) != nil {
+		t.Fatal("a copied record signalled the original profile's processes")
+	}
+	must(t, oko(t, append(orig, "status")...), "running")
+}
+
+// recorderOf returns the tracked recorder pid and capture dir of a profile's
+// only recording.
+func recorderOf(t *testing.T, profile string) (int, string) {
+	t.Helper()
+	b, _ := os.ReadFile(filepath.Join(home, "profiles", profile, "state.json"))
+	var st struct {
+		Recorders map[string]int `json:"recorders"`
+	}
+	_ = json.Unmarshal(b, &st)
+	if len(st.Recorders) != 1 {
+		t.Fatalf("want one tracked recorder, got %v", st.Recorders)
+	}
+	dirs, _ := filepath.Glob(filepath.Join(home, "profiles", profile, "recording-*"))
+	if len(dirs) != 1 {
+		t.Fatalf("want one capture dir, got %v", dirs)
+	}
+	for _, pid := range st.Recorders {
+		return pid, dirs[0]
+	}
+	return 0, ""
+}
+
+// 'record stop' stops only a recorder it can prove; a live one it cannot
+// (an older oko's: no record) keeps running, tracked, with its frames, and
+// stop says so. Once that recorder is gone, stop encodes what it captured.
+func TestRecordStopUnprovenRecorder(t *testing.T) {
+	p := []string{"-p", "recunproven"}
+	defer oko(t, append(p, "down")...)
+	oko(t, append(p, "up", "--headless", "--idle", "off")...)
+	oko(t, append(p, "open", base+"/form.html")...)
+	oko(t, append(p, "record", "start")...)
+	oko(t, append(p, "eval", "document.body.style.background = 'red'")...)
+	time.Sleep(500 * time.Millisecond)
+	pid, dir := recorderOf(t, "recunproven")
+	// As if an older oko had started it: no process record.
+	if err := os.Remove(filepath.Join(dir, "recorder.proc")); err != nil {
+		t.Fatal(err)
+	}
+	out := oko(t, append([]string{"!"}, append(p, "record", "stop", "-o", filepath.Join(t.TempDir(), "x.gif"))...)...)
+	must(t, out, "cannot prove", "nothing was stopped")
+	if syscall.Kill(pid, 0) != nil {
+		t.Fatal("unproven recorder was signalled")
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatal("frames removed")
+	}
+	if p2, _ := recorderOf(t, "recunproven"); p2 != pid {
+		t.Fatal("recorder no longer tracked")
+	}
+	// The user ends it (the test owns this process); stop now encodes.
+	_ = syscall.Kill(pid, syscall.SIGTERM)
+	for i := 0; i < 50 && syscall.Kill(pid, 0) == nil; i++ {
+		time.Sleep(100 * time.Millisecond)
+	}
+	gif := filepath.Join(t.TempDir(), "y.gif")
+	must(t, oko(t, append(p, "record", "stop", "-o", gif)...), "frames")
+	if _, err := os.Stat(gif); err != nil {
+		t.Fatal("no gif after the recorder was gone")
+	}
+}
+
+// A tracked recorder pid that now belongs to another process: not
+// signalled; --forget drops the tracking and leaves the frames.
+func TestRecordStopReusedPID(t *testing.T) {
+	p := []string{"-p", "recreused"}
+	defer oko(t, append(p, "down")...)
+	oko(t, append(p, "up", "--headless", "--idle", "off")...)
+	oko(t, append(p, "open", base+"/form.html")...)
+	oko(t, append(p, "record", "start")...)
+	pid, dir := recorderOf(t, "recreused")
+	// The real recorder ends; its pid "is reused" by a test process.
+	_ = syscall.Kill(pid, syscall.SIGTERM)
+	for i := 0; i < 50 && syscall.Kill(pid, 0) == nil; i++ {
+		time.Sleep(100 * time.Millisecond)
+	}
+	victim, exited := startVictim(t, "sleep", "60")
+	sp := filepath.Join(home, "profiles", "recreused", "state.json")
+	b, _ := os.ReadFile(sp)
+	_ = os.WriteFile(sp, []byte(strings.Replace(string(b), strconv.Itoa(pid), strconv.Itoa(victim), 1)), 0o600)
+	must(t, oko(t, append([]string{"!"}, append(p, "record", "stop")...)...), "cannot prove")
+	must(t, oko(t, append(p, "record", "stop", "--forget")...), "stopped tracking", "not signalled")
+	mustLive(t, exited, "process with the reused pid")
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatal("--forget removed the frames")
+	}
+	must(t, oko(t, append([]string{"!"}, append(p, "record", "stop")...)...), "not recording")
+}

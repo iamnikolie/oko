@@ -45,7 +45,9 @@ var viewportCmd = &cobra.Command{
 				if err != nil {
 					return err
 				}
-				stopHolder(s.prof, p.TargetID)
+				if err := stopHolder(s.prof, p.TargetID); err != nil {
+					return err
+				}
 				_ = proto.EmulationClearDeviceMetricsOverride{}.Call(p)
 				res, err := p.Eval(`() => innerWidth + 'x' + innerHeight`)
 				if err != nil {
@@ -66,7 +68,9 @@ var viewportCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
-			stopHolder(s.prof, p.TargetID)
+			if err := stopHolder(s.prof, p.TargetID); err != nil {
+				return err
+			}
 			if vpMobile || w < minWindowWidth {
 				scale := vpScale
 				if scale == 0 {
@@ -174,15 +178,23 @@ func holderRecordPath(prof *chrome.Profile, tab proto.TargetTargetID) string {
 	return filepath.Join(prof.Dir, "hold-"+string(tab)+".proc")
 }
 
-func stopHolder(prof *chrome.Profile, tab proto.TargetTargetID) {
-	if prof.State.Holders[string(tab)] == 0 {
-		return
+func stopHolder(prof *chrome.Profile, tab proto.TargetTargetID) error {
+	pid := prof.State.Holders[string(tab)]
+	if pid == 0 {
+		return nil
 	}
-	// Only the holder oko started is signalled (its process record).
-	chrome.SignalOwned(holderRecordPath(prof, tab), syscall.SIGTERM)
+	// Only the holder oko started is signalled (its process record). One
+	// that is alive but unproven (an older oko's, or a reused pid) is left
+	// alone and stays tracked.
+	if !chrome.SignalOwned(holderRecordPath(prof, tab), syscall.SIGTERM) && syscall.Kill(pid, 0) == nil {
+		return fmt.Errorf("the emulation of this tab is held by pid %d, which oko cannot prove it started "+
+			"(an older oko's, or the pid was reused); nothing was changed. If 'ps -p %d' shows 'oko _hold', "+
+			"end it yourself (or close the tab) and run the command again", pid, pid)
+	}
 	delete(prof.State.Holders, string(tab))
 	_ = prof.Save()
 	time.Sleep(100 * time.Millisecond)
+	return nil
 }
 
 // holdCmd is the background process behind emulated viewports: it applies

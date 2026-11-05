@@ -99,6 +99,11 @@ oko record stop -o demo.gif       # or demo.mp4; prints path, frames, duration, 
 oko record status
 ```
 
+`record stop` stops only a recorder this oko can prove it started. A recorder
+it cannot prove (started by an older oko) is left running with its frames and
+`stop` says so: end that `oko _record` process yourself and run `stop` again,
+or `stop --forget` to drop it without touching it.
+
 A hidden tab (another tab in front, minimized window) is activated first, since it
 paints no frames. Frames come from Chrome's screencast (only when the page repaints), idle gaps
 are capped at 2 s, the last frame is held 1.5 s. `--width` (960) and `--fps`
