@@ -124,8 +124,8 @@ func (p *Profile) ensureRelay() (int, error) {
 
 // StopRelay ends the profile's relay, if any.
 func (p *Profile) StopRelay() {
-	if p.State.Relay > 0 && syscall.Kill(p.State.Relay, 0) == nil {
-		_ = syscall.Kill(p.State.Relay, syscall.SIGTERM)
+	if pid := Helper(p.State.Relay, "_proxy", p.Name); pid != 0 {
+		_ = syscall.Kill(pid, syscall.SIGTERM)
 	}
 	p.State.Relay = 0
 	_ = p.Save()

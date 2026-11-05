@@ -47,6 +47,13 @@ var upCmd = &cobra.Command{
 			printExtStatus(st, p.Name)
 			return nil
 		}
+		// Hold the command lease like any command: the reaper must not close
+		// the browser this command is starting or reconfiguring.
+		release, err := p.Use(ctx)
+		if err != nil {
+			return err
+		}
+		defer release()
 		if cmd.Flags().Changed("human") {
 			p.State.Human = humanFlag
 			_ = p.Save()
@@ -151,9 +158,13 @@ var downCmd = &cobra.Command{
 	},
 }
 
-// idleNote describes when the browser closes on its own.
+// idleNote describes when the browser closes on its own: the limit in force
+// for a running browser, the one this caller would apply otherwise.
 func idleNote(p *chrome.Profile) string {
-	ttl := p.IdleTTL()
+	return idleText(p.IdleLimit())
+}
+
+func idleText(ttl time.Duration) string {
 	if ttl == 0 {
 		return "never closes when idle"
 	}
@@ -186,11 +197,15 @@ var statusCmd = &cobra.Command{
 		}
 		_, err = p.Endpoint(ctx)
 		running := err == nil
+		idleLimit := p.IdleTTL()
+		if running {
+			idleLimit = p.IdleLimit()
+		}
 		me := p.Session(sessionKey())
 		if jsonOutput {
 			out := map[string]interface{}{"profile": p.Name, "port": p.State.Port, "running": running,
 				"headless": p.State.Headless, "dir": p.UserDataDir(), "session": me.Key, "tab": shortTab(me.Tab),
-				"idle_limit": p.IdleTTL().String()}
+				"idle_limit": idleLimit.String()}
 			if t := p.LastUsed(); !t.IsZero() {
 				out["last_used"] = t.Format(time.RFC3339)
 			}
@@ -204,7 +219,7 @@ var statusCmd = &cobra.Command{
 		if running {
 			state = "running"
 		}
-		fmt.Fprintf(stdout, "profile %s: %s, port %d, %s\ndir: %s\n", p.Name, state, p.State.Port, idleNote(p), p.UserDataDir())
+		fmt.Fprintf(stdout, "profile %s: %s, port %d, %s\ndir: %s\n", p.Name, state, p.State.Port, idleText(idleLimit), p.UserDataDir())
 		cur := "none"
 		if me.Tab != "" {
 			cur = shortTab(me.Tab)

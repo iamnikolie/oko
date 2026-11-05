@@ -82,10 +82,26 @@ func connect(ctx context.Context, launch bool) (*session, error) {
 	return &session{ctx: ctx, prof: p, b: b, me: p.Session(sessionKey()), launched: launched}, nil
 }
 
+// useProfile takes the current profile's command lease (see chrome.Profile.Use).
+func useProfile(ctx context.Context) (func(), error) {
+	p, err := chrome.Load(profileName)
+	if err != nil {
+		return nil, err
+	}
+	return p.Use(ctx)
+}
+
 // run is the common wrapper: timeout, attach (auto-start), run fn.
 func run(fn func(s *session) error) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
+	// The lease keeps the idle reaper off the browser until fn is done; taken
+	// before attaching, it also waits out a reaper that is closing it.
+	release, err := useProfile(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
 	s, err := connect(ctx, true)
 	if err != nil {
 		return err
@@ -93,9 +109,9 @@ func run(fn func(s *session) error) error {
 	// The element picker and the idle reaper ride along with the browser.
 	_ = ensureWatch(s.prof, false)
 	used(s.prof)
-	done := keepUsed(s.prof)
 	err = fn(s)
-	done()
+	// Idle time counts from the end of the command.
+	s.prof.Touch()
 	s.flushNotes()
 	s.record()
 	if s.prof.State.Extension {

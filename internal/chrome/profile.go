@@ -210,22 +210,13 @@ func (p *Profile) Endpoint(ctx context.Context) (string, error) {
 	return v.WS, nil
 }
 
-// PID returns the process id holding this profile's SingletonLock when that
-// process is alive. Chrome's lock is a symlink to "<host>-<pid>".
+// PID returns the pid of this profile's own Chrome: the process holding its
+// SingletonLock, alive, and proven to be the Chrome of this profile (see
+// isOurChrome). 0 when not running or when ownership cannot be proven, so
+// callers never signal a process that merely reused the pid.
 func (p *Profile) PID() int {
-	target, err := os.Readlink(filepath.Join(p.UserDataDir(), "SingletonLock"))
-	if err != nil {
-		return 0
-	}
-	i := strings.LastIndex(target, "-")
-	if i < 0 {
-		return 0
-	}
-	pid, err := strconv.Atoi(target[i+1:])
-	if err != nil || pid <= 0 {
-		return 0
-	}
-	if syscall.Kill(pid, 0) != nil {
+	pid := p.lockPID()
+	if _, ok := p.isOurChrome(pid); !ok {
 		return 0
 	}
 	return pid
@@ -359,6 +350,7 @@ func (p *Profile) Launch(ctx context.Context, headless bool) (string, error) {
 	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
 		if ws, err := p.Endpoint(ctx); err == nil {
+			p.recordLaunch()
 			if front > 0 {
 				// Chrome raises its new window anyway; hand focus back.
 				time.Sleep(300 * time.Millisecond)

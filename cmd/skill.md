@@ -259,7 +259,8 @@ oko status | up [--headless] [--lang en-US] [--proxy URL] [--idle 30m|off] | dow
   `net --live`) and an unfinished `record` count as use; a window the user has
   in front (macOS) stays. `oko up --idle 4h` changes the limit per profile,
   `--idle off` disables it, `--idle default` goes back to `$OKO_IDLE` (else
-  30m). Run `oko down` when done with a profile anyway.
+  30m). A running browser follows the limit of the latest command (`status`
+  shows it). Run `oko down` when done with a profile anyway.
 - `navigator.webdriver` is false: Chrome starts with
   `--disable-blink-features=AutomationControlled` (+ `--test-type`, which hides
   Chrome's "unsupported flag" bar).

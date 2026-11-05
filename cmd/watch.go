@@ -40,10 +40,18 @@ func watchPID(p *chrome.Profile) int {
 		return 0
 	}
 	pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
-	if pid <= 0 || syscall.Kill(pid, 0) != nil {
-		return 0
+	return chrome.Helper(pid, "_watch", p.Name)
+}
+
+// watchAlive is the cheap check whether to start a watcher: its pid file
+// names a live process. Signals go through watchPID, which proves it.
+func watchAlive(p *chrome.Profile) bool {
+	b, err := os.ReadFile(watchPidPath(p))
+	if err != nil {
+		return false
 	}
-	return pid
+	pid, _ := strconv.Atoi(strings.TrimSpace(string(b)))
+	return pid > 0 && syscall.Kill(pid, 0) == nil
 }
 
 // ensureWatch starts the watcher when the browser runs without one. It never
@@ -57,7 +65,7 @@ func ensureWatch(p *chrome.Profile, wait bool) error {
 	if p.State.NoWatch || os.Getenv("OKO_WATCH") == "0" || p.State.Headless && !force {
 		return errors.New("watcher disabled for this profile ('oko watch on' enables it)")
 	}
-	if watchPID(p) != 0 {
+	if watchAlive(p) {
 		return nil
 	}
 	self, err := os.Executable()

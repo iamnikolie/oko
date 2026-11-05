@@ -233,6 +233,15 @@ var recorderCmd = &cobra.Command{
 		width, _ := strconv.Atoi(args[2])
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
+		// An unfinished recording keeps the browser: the recorder holds a
+		// command lease until it stops, so the idle reaper leaves it alone.
+		lctx, lcancel := context.WithTimeout(ctx, 10*time.Second)
+		release, err := useProfile(lctx)
+		lcancel()
+		if err != nil {
+			return err
+		}
+		defer release()
 		s, err := connect(ctx, false)
 		if err != nil {
 			return err
